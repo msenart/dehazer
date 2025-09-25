@@ -1,3 +1,4 @@
 Pillow
 numpy
 matplotlib
+cupy-cuda11x
