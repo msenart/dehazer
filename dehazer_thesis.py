@@ -209,5 +209,5 @@ def dehaze(img_path, out_dir="dehazed_results"):
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("C:/Users/22863/Desktop/git/ima1/ima_projet/dehazer/hazed_images/2_crop.jpg", 
+    dehaze("C:/Users/22863/Desktop/git/ima1/ima_projet/dehazer/hazed_images/4.jpg", 
        "C:/Users/22863/Desktop/git/ima1/ima_projet/dehazer/dehazed_images")
