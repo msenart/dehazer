@@ -107,11 +107,13 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     # pre-allocate lists for sparse laplacian L
     rows, cols, vals = [], [], []
     loading_counter = 0
-    loading_total = (H-win_radius)*(W-win_radius)
+    loading_total = (H-2*win_radius)*(W-2*win_radius)
+
     # For each window, compute local statistics and add to Laplacian
     for y in range(win_radius, H - win_radius):
         for x in range(win_radius, W - win_radius):
-            print(f"loading laplacian : ({loading_counter}/{loading_total})")
+            if (loading_counter%int(loading_total/100) == int(loading_total/100)-1):
+                print(f"loading laplacian : {int((loading_counter/loading_total)*100)}%")
             ys, ye = y - win_radius, y + win_radius + 1
             xs, xe = x - win_radius, x + win_radius + 1
 
@@ -144,6 +146,8 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
             vals.append(Lw.reshape(-1))
             loading_counter+=1
 
+    print("loading laplacian : 100% ! Inverting matrix...")
+
     rows = np.concatenate(rows)
     cols = np.concatenate(cols)
     vals = np.concatenate(vals)
@@ -153,11 +157,12 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
     b = lam * t_coarse.flatten()
-
+    
     # Solve sparse linear system
     t_refined = spsolve(A, b).reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
+    print("soft matting completed !")
     return np.clip(t_refined, 0.0, 1.0)
 
 def recover_radiance(I, A, t, t0=0.1):
@@ -173,7 +178,7 @@ def recover_radiance(I, A, t, t0=0.1):
     J = (I - A) / t[..., None] + A             # Eq.(16)
     return np.clip(J, 0.0, 1.0)                # keep valid range
 
-def dehaze(img_path, out_dir="dehazed_results"):
+def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, t_size = 15, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1):
     """
     Full single-image dehazing pipeline (He et al. 2009).
     img_path : path to hazy image
@@ -183,24 +188,24 @@ def dehaze(img_path, out_dir="dehazed_results"):
     I = cv2.imread(img_path).astype('float32') / 255.0
 
     # 2. dark channel
-    dark = dark_channel(I, size=15)
+    dark = dark_channel(I, dc_size)
 
     # 3. atmospheric light
-    A = estimate_atmospheric_light(I, dark, top_percent=0.001, patch_avg=1)
+    A = estimate_atmospheric_light(I, dark, top_percent, patch_avg)
 
     # 4. coarse transmission
-    t_coarse = estimate_transmission(I, A, omega=0.95, size=15)
+    t_coarse = estimate_transmission(I, A, omega, t_size)
 
     # 5. refine transmission
     try:
         I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
-        t_refined = soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4)
+        t_refined = soft_matting(I_rgb, t_coarse, w_radius, eps, lam)
     except Exception as e:
         print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
         t_refined = t_coarse
 
     # 6. recover scene radiance
-    J = recover_radiance(I, A, t_refined, t0=0.1)
+    J = recover_radiance(I, A, t_refined, t0)
 
     # 7. save result
     os.makedirs(out_dir, exist_ok=True)
@@ -212,4 +217,5 @@ def dehaze(img_path, out_dir="dehazed_results"):
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("images/coolimage.png","images")
+    dehaze("images/haze_test.jpeg","images",
+           dc_size = 5, w_radius = 4, patch_avg = 3)
