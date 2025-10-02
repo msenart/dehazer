@@ -106,10 +106,12 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
 
     # pre-allocate lists for sparse laplacian L
     rows, cols, vals = [], [], []
-
+    loading_counter = 0
+    loading_total = (H-win_radius)*(W-win_radius)
     # For each window, compute local statistics and add to Laplacian
     for y in range(win_radius, H - win_radius):
         for x in range(win_radius, W - win_radius):
+            print(f"loading laplacian : ({loading_counter}/{loading_total})")
             ys, ye = y - win_radius, y + win_radius + 1
             xs, xe = x - win_radius, x + win_radius + 1
 
@@ -140,6 +142,7 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
             rows.append(ii)
             cols.append(jj)
             vals.append(Lw.reshape(-1))
+            loading_counter+=1
 
     rows = np.concatenate(rows)
     cols = np.concatenate(cols)
@@ -209,5 +212,4 @@ def dehaze(img_path, out_dir="dehazed_results"):
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("C:/Users/22863/Desktop/git/ima1/ima_projet/dehazer/hazed_images/4.jpg", 
-       "C:/Users/22863/Desktop/git/ima1/ima_projet/dehazer/dehazed_images")
+    dehaze("images/coolimage.png","images")
