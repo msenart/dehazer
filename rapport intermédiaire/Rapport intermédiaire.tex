@@ -40,7 +40,6 @@ Il s'agit de travailler sur le principe de l'enleveur de brume (dehazer) en suiv
 \\[1em]
 Le papier a été implémenté de bout en bout : le \textit{dark channel} est calculé, la lumière ambiante en est déduite ainsi que la transmission. la technique de \textit{soft matting} comme recommandée par le papier a été aussi appliquée pour retrouver l'image sans brume.
 \\[1em]
-\vspace{1em}
 \begin{large}
 \textbf{Résultats :}
 \end{large}
@@ -51,21 +50,21 @@ Nous avons vérifié le programme sur les images de la thèse. En voici les rés
     % Première image
     \begin{subfigure}[b]{0.27\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{hazed_images/4.jpg}
+        \includegraphics[width=\textwidth]{../hazed_images/4.jpg}
         \caption{{\scriptsize image enbrumée venant de la thèse}}
         \label{fig:image1}
     \end{subfigure}
     % Deuxième image
     \begin{subfigure}[b]{0.27\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{dehazed_images/4_dehazed.png}
+        \includegraphics[width=\textwidth]{../dehazed_images/4_dehazed.png}
         \caption{{\scriptsize image désenbrumée du programme}}
         \label{fig:image2}
     \end{subfigure}
     % Troisième image
     \begin{subfigure}[b]{0.27\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{thesis_images/4_dehazed.png}
+        \includegraphics[width=\textwidth]{../thesis_images/4_dehazed.png}
         \caption{{\scriptsize image désenbrumée de la thèse}}
         \label{fig:image2}
     \end{subfigure}
@@ -74,37 +73,18 @@ Nous avons vérifié le programme sur les images de la thèse. En voici les rés
 \end{figure}
 Il semble qu'il y ait une meilleure coloration sur l'image fournie par la thèse, mais l'image obtenue par programme reste très semblable : on a l'impression que la brume a été retirée. Les différences doivent résider dans les paramètres qu'on applique à l'algorithme.
 \\[1em]
-Le principal désavantage de cette méthode est qu'elle est très lente à s'exécuter : elle devient impossible à appliquer sur des grandes images. On est on contraint d'appliquer l'algorithme sur des images de petite résolution (D'où l'apparition de petits carrés sur l'image). Cette contrainte nous amène donc à compresser les images et à en réduire leur qualité. Cela en devient problématique sur certaines images :
+Le principal désavantage de cette méthode est qu'elle est très lente à s'exécuter : elle devient impossible à appliquer sur des grandes images. On est on contraint d'appliquer l'algorithme sur des images de petite résolution (D'où l'apparition de petits carrés sur l'image dans notre programme). Cette contrainte nous amène donc à compresser les images et à en réduire leur qualité. Cela en devient problématique sur certaines images, où beaucoup d'artefacts issus de la compression de l'image altèrent le rendu final.
+On a ainsi beaucoup de mal à déterminer la qualité du \textit{dehazer} en se contentant de petites images.
 
 \begin{figure}[H]
     \centering
     % Première image
     \begin{subfigure}[b]{0.27\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{hazed_images/4.jpg}
-        \caption{{\scriptsize image enbrumée quelconque compressée}}
-        \label{fig:image1}
+        \includegraphics[width=\textwidth]{../dehazed_images/2_crop_dehazed_2.png}
+        \caption{{\scriptsize image désembrumée quelconque par notre programme}}
     \end{subfigure}
-    % Deuxième image
-    \begin{subfigure}[b]{0.27\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{dehazed_images/4_dehazed.png}
-        \caption{{\scriptsize image désenbrumée du programme}}
-        \label{fig:image2}
-    \end{subfigure}
-    % Troisième image
-    \begin{subfigure}[b]{0.27\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{thesis_images/4_dehazed.png}
-        \caption{{\scriptsize image désenbrumée de la thèse}}
-        \label{fig:image2}
-    \end{subfigure}
-    \caption{Comparaison de l'image obtenue par programme avec l'image de la thèse}
-    \label{fig:deux_images}
 \end{figure}
-En fait, beaucoup d'artefacts issus de la compression d'image altèrent le rendu final.
-On a ainsi beaucoup de mal à déterminer la qualité du \textit{dehazer} en se contenant de petites images.
-\\[1em]
 \begin{large}
 \textbf{Objectifs :}
 \end{large}
