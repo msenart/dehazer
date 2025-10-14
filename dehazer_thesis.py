@@ -9,8 +9,8 @@ Comments are in English.
 import os
 import cv2
 import numpy as np
-from scipy.sparse import csr_matrix, eye
-from scipy.sparse.linalg import spsolve
+from scipy.sparse import csr_matrix, eye, lil_matrix
+from scipy.sparse.linalg import spsolve, cg
 
 def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted for different resolutions
     """Compute the dark channel of an image.
@@ -107,17 +107,15 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     # pre-allocate lists for sparse laplacian L
     total_loop_length = (H-2*win_radius)*(W-2*win_radius)
     total_loop_idx = 0
+
     print(K*total_loop_length*((2*win_radius+1)**2))
-    rows = np.zeros(K*K*total_loop_length,dtype=np.float32)
-    cols = np.zeros(K*K*total_loop_length,dtype=np.float32)
-    vals = np.zeros(K*K*total_loop_length,dtype=np.float32)
-    loading_counter = 0
-    flag = 0
+    L = lil_matrix((N, N), dtype=np.float32)
+
     # For each window, compute local statistics and add to Laplacian
     for y in range(win_radius, H - win_radius):
         for x in range(win_radius, W - win_radius):
-            if (loading_counter%int(total_loop_length/100) == int(total_loop_length/100)-1):
-                print(f"loading laplacian : {int((loading_counter/total_loop_length)*100)}%")
+            if (total_loop_idx%int(total_loop_length/100) == int(total_loop_length/100)-1):
+                print(f"loading laplacian : {int((total_loop_idx/total_loop_length)*100)}%")
             ys, ye = y - win_radius, y + win_radius + 1
             xs, xe = x - win_radius, x + win_radius + 1
 
@@ -143,34 +141,33 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
             Lw -= Q                                          # Lw = M - Q
 
             # scatter-add to global Laplacian
-            ii = np.repeat(win_inds, K)
-            jj = np.tile(win_inds, K)
+            ii = np.repeat(win_inds, K).reshape(-1)
+            jj = np.tile(win_inds, K).reshape(-1)
             kk = Lw.reshape(-1)
 
-            rows[total_loop_idx*len(ii):(total_loop_idx+1)*len(ii)] = ii.reshape(-1)
-            cols[total_loop_idx*len(jj):(total_loop_idx+1)*len(jj)] = jj.reshape(-1)
-            vals[total_loop_idx*len(kk):(total_loop_idx+1)*len(kk)] = kk.reshape(-1)
-            flag = (total_loop_idx+1)*len(kk)
-            loading_counter+=1
+            for idx in range(len(ii)):
+                L[ii[idx],jj[idx]] = kk[idx]
+                    
             total_loop_idx+=1
 
     print("loading laplacian : 100% !")
-    print(len(rows))
-    print(flag)
     print("Putting it all in order (1/3)")
     # (slow !)
-    L = csr_matrix((vals, (rows, cols)), shape=(N, N))
+    L = L.tocsr()
     print("Putting it all in order (2/3)")
     # (slow !)
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
     print("Putting it all in order (3/3)")
-    b = lam * t_coarse.flatten()
+    b = lam * t_coarse.reshape(-1)
     
     print("loading laplacian : 100% ! Inverting matrix...")
 
     # Solve sparse linear system (slow !)
-    t_refined = spsolve(A, b).reshape(H, W).astype(np.float32)
+    t_refined, info = cg(A, b, rtol=1e-6, maxiter=500)
+    if info != 0:
+        print("⚠️ CG did not fully converge, info =", info)
+    t_refined = t_refined.reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
     print("soft matting completed !")
