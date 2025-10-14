@@ -105,20 +105,24 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     inds = np.arange(N).reshape(H, W)
 
     # pre-allocate lists for sparse laplacian L
-    rows, cols, vals = [], [], []
+    total_loop_length = (H-2*win_radius)*(W-2*win_radius)
+    total_loop_idx = 0
+    print(K*total_loop_length*((2*win_radius+1)**2))
+    rows = np.zeros(K*K*total_loop_length,dtype=np.float32)
+    cols = np.zeros(K*K*total_loop_length,dtype=np.float32)
+    vals = np.zeros(K*K*total_loop_length,dtype=np.float32)
     loading_counter = 0
-    loading_total = (H-2*win_radius)*(W-2*win_radius)
-
+    flag = 0
     # For each window, compute local statistics and add to Laplacian
     for y in range(win_radius, H - win_radius):
         for x in range(win_radius, W - win_radius):
-            if (loading_counter%int(loading_total/100) == int(loading_total/100)-1):
-                print(f"loading laplacian : {int((loading_counter/loading_total)*100)}%")
+            if (loading_counter%int(total_loop_length/100) == int(total_loop_length/100)-1):
+                print(f"loading laplacian : {int((loading_counter/total_loop_length)*100)}%")
             ys, ye = y - win_radius, y + win_radius + 1
             xs, xe = x - win_radius, x + win_radius + 1
 
             win_inds = inds[ys:ye, xs:xe].reshape(-1)
-            win_I = I_rgb[ys:ye, xs:xe, :].reshape(K, 3).astype(np.float64)
+            win_I = I_rgb[ys:ye, xs:xe, :].reshape(K, 3).astype(np.float32)
 
             mu = win_I.mean(axis=0, keepdims=True)           # 1x3
             cov = (win_I - mu).T @ (win_I - mu) / K          # 3x3
@@ -141,24 +145,31 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
             # scatter-add to global Laplacian
             ii = np.repeat(win_inds, K)
             jj = np.tile(win_inds, K)
-            rows.append(ii)
-            cols.append(jj)
-            vals.append(Lw.reshape(-1))
+            kk = Lw.reshape(-1)
+
+            rows[total_loop_idx*len(ii):(total_loop_idx+1)*len(ii)] = ii.reshape(-1)
+            cols[total_loop_idx*len(jj):(total_loop_idx+1)*len(jj)] = jj.reshape(-1)
+            vals[total_loop_idx*len(kk):(total_loop_idx+1)*len(kk)] = kk.reshape(-1)
+            flag = (total_loop_idx+1)*len(kk)
             loading_counter+=1
+            total_loop_idx+=1
 
-    print("loading laplacian : 100% ! Inverting matrix...")
-
-    rows = np.concatenate(rows)
-    cols = np.concatenate(cols)
-    vals = np.concatenate(vals)
-
+    print("loading laplacian : 100% !")
+    print(len(rows))
+    print(flag)
+    print("Putting it all in order (1/3)")
+    # (slow !)
     L = csr_matrix((vals, (rows, cols)), shape=(N, N))
-
+    print("Putting it all in order (2/3)")
+    # (slow !)
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
+    print("Putting it all in order (3/3)")
     b = lam * t_coarse.flatten()
     
-    # Solve sparse linear system
+    print("loading laplacian : 100% ! Inverting matrix...")
+
+    # Solve sparse linear system (slow !)
     t_refined = spsolve(A, b).reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
