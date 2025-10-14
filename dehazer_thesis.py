@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from scipy.sparse import csr_matrix, eye, lil_matrix
 from scipy.sparse.linalg import spsolve, cg
+import numba
 
 def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted for different resolutions
     """Compute the dark channel of an image.
@@ -108,8 +109,10 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     total_loop_length = (H-2*win_radius)*(W-2*win_radius)
     total_loop_idx = 0
 
-    print(K*total_loop_length*((2*win_radius+1)**2))
-    L = lil_matrix((N, N), dtype=np.float32)
+    
+    rows = np.zeros(K*K*total_loop_length)
+    cols = np.zeros(K*K*total_loop_length)
+    vals = np.zeros(K*K*total_loop_length)
 
     # For each window, compute local statistics and add to Laplacian
     for y in range(win_radius, H - win_radius):
@@ -141,19 +144,22 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
             Lw -= Q                                          # Lw = M - Q
 
             # scatter-add to global Laplacian
-            ii = np.repeat(win_inds, K).reshape(-1)
-            jj = np.tile(win_inds, K).reshape(-1)
+            ii = np.repeat(win_inds, K)
+            jj = np.tile(win_inds, K)
             kk = Lw.reshape(-1)
 
-            for idx in range(len(ii)):
-                L[ii[idx],jj[idx]] = kk[idx]
+            start = total_loop_idx * len(ii)
+            end = (total_loop_idx + 1) * len(ii)
+            rows[start:end] = ii
+            cols[start:end] = jj
+            vals[start:end] = kk
                     
             total_loop_idx+=1
 
     print("loading laplacian : 100% !")
     print("Putting it all in order (1/3)")
     # (slow !)
-    L = L.tocsr()
+    L = csr_matrix((vals, (rows, cols)), shape=(N, N))
     print("Putting it all in order (2/3)")
     # (slow !)
     # Data term: lambda * (t - t0)^2
@@ -164,13 +170,13 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     print("loading laplacian : 100% ! Inverting matrix...")
 
     # Solve sparse linear system (slow !)
-    t_refined, info = cg(A, b, rtol=1e-6, maxiter=500)
+    t_refined, info = cg(A, b, rtol=1e-6,maxiter=500)
     if info != 0:
         print("⚠️ CG did not fully converge, info =", info)
     t_refined = t_refined.reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
-    print("soft matting completed !")
+    print("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
 
 def recover_radiance(I, A, t, t0=0.1):
@@ -225,5 +231,5 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("images/haze_test.jpeg","images",
+    dehaze("hazed_images/4.jpg","dehazed_images",
            dc_size = 5, w_radius = 4, patch_avg = 3)
