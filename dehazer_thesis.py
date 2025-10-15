@@ -12,7 +12,7 @@ import numpy as np
 from scipy.sparse import csr_matrix, eye, lil_matrix
 from scipy.sparse.linalg import spsolve, cg
 import numba
-
+from multiprocessing import Pool, cpu_count, Manager
 def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted for different resolutions
     """Compute the dark channel of an image.
     im: [H,W,3], uint8 or float in [0,1]
@@ -213,7 +213,9 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     # 5. refine transmission
     try:
         I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
-        t_refined = soft_matting(I_rgb, t_coarse, w_radius, eps, lam)
+        
+        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 5, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, ratio = 0.5)
+
     except Exception as e:
         print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
         t_refined = t_coarse
@@ -228,6 +230,68 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     cv2.imwrite(out_path, (J * 255).astype('uint8'))
     print(f"[INFO] Dehazed image saved to {out_path}")
     return J, t_refined, A
+
+def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray ,n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float,ratio : float = 0.5) -> list[np.ndarray]:
+    height,width = t_coarse.shape
+    height_cut = height//n_cut_height
+    width_cut = width//n_cut_width
+    transmission_patches = []
+    I_rgb_patches = []
+    coords = []
+
+    print("cutting the image before doing soft matting")
+
+    for i in range(n_cut_height):
+        for j in range(n_cut_width):
+
+            i_min_idx = max(0,i*height_cut)
+            j_min_idx = max(0,j*width_cut)
+            i_max_idx = min(height,(i+1)*height_cut)
+            j_max_idx = min(width,(j+1)*width_cut)
+
+            if (i == n_cut_height-1 and height%n_cut_height < ratio*height_cut) :
+                i_max_idx = height
+            if (j == n_cut_width-1 and width%n_cut_width < ratio*width_cut) :
+                j_max_idx = width
+            
+            transmission_patches.append(t_coarse[i_min_idx:i_max_idx,j_min_idx:j_max_idx])
+            I_rgb_patches.append(I_rgb[i_min_idx:i_max_idx,j_min_idx:j_max_idx,:])
+            coords.append((i_min_idx, i_max_idx, j_min_idx, j_max_idx))
+
+    print([m.shape for m in transmission_patches])
+    print([m.shape for m in I_rgb_patches])
+
+    loading_total = len(transmission_patches)
+
+    manager = Manager()
+    started_counter = manager.Value('i', 0)
+    loading_counter = manager.Value('i', 0)
+
+    args_list = []
+    for (I_patch ,t_patch, (i_min, i_max, j_min, j_max)) in zip(I_rgb_patches,transmission_patches, coords):
+        args_list.append((I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total))
+    
+    with Pool(processes=3) as pool:
+        results = pool.starmap(patch_soft_matting_process, args_list)
+
+    print(f"============= patch all treated ! =============")
+
+    t_refined_full = np.zeros((height, width), dtype=np.float32)
+
+    for patch, i_min, i_max, j_min, j_max in results:
+        t_refined_full[i_min:i_max, j_min:j_max] = patch
+
+    return np.clip(t_refined_full, 0.0, 1.0)
+
+def patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total):
+    started_counter.value+=1
+    print(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
+    refined_patch = soft_matting(I_patch,t_patch, win_radius, eps, lam)
+    refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
+    loading_counter.value+=1
+    print(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
+    return refined_patch,i_min,i_max,j_min,j_max
+
 
 # Example usage
 if __name__ == "__main__":
