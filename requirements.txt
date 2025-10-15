@@ -4,3 +4,4 @@ numpy
 numba
 opencv-python
 scipy
+multiprocessing

@@ -214,7 +214,7 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     try:
         I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
         
-        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 5, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, ratio = 0.5)
+        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, ratio = 0.5)
 
     except Exception as e:
         print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
@@ -271,7 +271,7 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
     for (I_patch ,t_patch, (i_min, i_max, j_min, j_max)) in zip(I_rgb_patches,transmission_patches, coords):
         args_list.append((I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total))
     
-    with Pool(processes=3) as pool:
+    with Pool(processes=1) as pool:
         results = pool.starmap(patch_soft_matting_process, args_list)
 
     print(f"============= patch all treated ! =============")
@@ -280,6 +280,8 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
 
     for patch, i_min, i_max, j_min, j_max in results:
         t_refined_full[i_min:i_max, j_min:j_max] = patch
+
+    t_refined_full = cv2.GaussianBlur(t_refined_full, (11,11), sigmaX=1.0)
 
     return np.clip(t_refined_full, 0.0, 1.0)
 
@@ -295,5 +297,5 @@ def patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radiu
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("hazed_images/4.jpg","dehazed_images",
-           dc_size = 5, w_radius = 4, patch_avg = 3)
+    dehaze("hazed_images/7.jpg","dehazed_images",
+           dc_size = 5, w_radius = 2, patch_avg = 3)
