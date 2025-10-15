@@ -262,37 +262,52 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
     print([m.shape for m in I_rgb_patches])
 
     loading_total = len(transmission_patches)
-
-    manager = Manager()
-    started_counter = manager.Value('i', 0)
-    loading_counter = manager.Value('i', 0)
-
-    args_list = []
-    for (I_patch ,t_patch, (i_min, i_max, j_min, j_max)) in zip(I_rgb_patches,transmission_patches, coords):
-        args_list.append((I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total))
-    
-    with Pool(processes=1) as pool:
-        results = pool.starmap(patch_soft_matting_process, args_list)
-
-    print(f"============= patch all treated ! =============")
-
+    loading_counter = 0
     t_refined_full = np.zeros((height, width), dtype=np.float32)
 
-    for patch, i_min, i_max, j_min, j_max in results:
-        t_refined_full[i_min:i_max, j_min:j_max] = patch
+    for t_patch,i_patch,coord in zip(transmission_patches,I_rgb_patches,coords):
+        print(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
+        i_min, i_max, j_min, j_max = coord
+        refined_patch = soft_matting(i_patch,t_patch, win_radius, eps, lam)
+        refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
+        t_refined_full[i_min:i_max,j_min:j_max] = refined_patch
+        loading_total+=1
+        print(f"============= patch {t_patch.shape} finished ! : {loading_counter}/{loading_total} =============")
+    
+    return np.clip(t_refined_full,0.0,1.0)
 
-    t_refined_full = cv2.GaussianBlur(t_refined_full, (11,11), sigmaX=1.0)
+# ==================== tried to cut the picture into pieces and multi-process this - ugly result =======================
 
-    return np.clip(t_refined_full, 0.0, 1.0)
+#     manager = Manager()
+#     started_counter = manager.Value('i', 0)
+#     loading_counter = manager.Value('i', 0)
 
-def patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total):
-    started_counter.value+=1
-    print(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
-    refined_patch = soft_matting(I_patch,t_patch, win_radius, eps, lam)
-    refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
-    loading_counter.value+=1
-    print(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
-    return refined_patch,i_min,i_max,j_min,j_max
+#     args_list = []
+#     for (I_patch ,t_patch, (i_min, i_max, j_min, j_max)) in zip(I_rgb_patches,transmission_patches, coords):
+#         args_list.append((I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total))
+    
+#     with Pool(processes=1) as pool:
+#         results = pool.starmap(patch_soft_matting_process, args_list)
+
+#     print(f"============= patch all treated ! =============")
+
+#     t_refined_full = np.zeros((height, width), dtype=np.float32)
+
+#     for patch, i_min, i_max, j_min, j_max in results:
+#         t_refined_full[i_min:i_max, j_min:j_max] = patch
+
+#     t_refined_full = cv2.GaussianBlur(t_refined_full, (11,11), sigmaX=1.0)
+
+#     return np.clip(t_refined_full, 0.0, 1.0)
+
+# def patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total):
+#     started_counter.value+=1
+#     print(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
+#     refined_patch = soft_matting(I_patch,t_patch, win_radius, eps, lam)
+#     refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
+#     loading_counter.value+=1
+#     print(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
+#     return refined_patch,i_min,i_max,j_min,j_max
 
 
 # Example usage
