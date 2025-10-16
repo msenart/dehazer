@@ -12,7 +12,8 @@ import numpy as np
 from scipy.sparse import csr_matrix, eye, lil_matrix
 from scipy.sparse.linalg import spsolve, cg
 import numba
-from multiprocessing import Pool, cpu_count, Manager
+from multiprocessing import Pool, cpu_count, Manager, shared_memory
+
 def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted for different resolutions
     """Compute the dark channel of an image.
     im: [H,W,3], uint8 or float in [0,1]
@@ -105,56 +106,46 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     # flatten helpers
     inds = np.arange(N).reshape(H, W)
 
-    # pre-allocate lists for sparse laplacian L
-    total_loop_length = (H-2*win_radius)*(W-2*win_radius)
-    total_loop_idx = 0
+    # allocate shared variables before multiprocessing
 
-    
-    rows = np.zeros(K*K*total_loop_length)
-    cols = np.zeros(K*K*total_loop_length)
-    vals = np.zeros(K*K*total_loop_length)
+    shared_I_buff = shared_memory.SharedMemory(create=True, size=I_rgb.nbytes)
+    shared_I_rgb = np.ndarray(I_rgb.shape, dtype=I_rgb.dtype, buffer=shared_I_buff.buf)
+    shared_I_rgb[:] = I_rgb[:]
 
-    # For each window, compute local statistics and add to Laplacian
+    shared_inds_buff = shared_memory.SharedMemory(create=True, size=inds.nbytes)
+    shared_inds = np.ndarray(inds.shape, dtype=inds.dtype, buffer=shared_inds_buff.buf)
+    shared_inds[:] = inds[:]
+
+    manager = Manager()
+    big_loop_length = H-2*win_radius
+    big_loop_counter = manager.Value('i',0)
+    big_loop_start_counter = manager.Value('i',0)
+    args_list = []
+
     for y in range(win_radius, H - win_radius):
-        for x in range(win_radius, W - win_radius):
-            if (total_loop_idx%int(total_loop_length/100) == int(total_loop_length/100)-1):
-                print(f"loading laplacian : {int((total_loop_idx/total_loop_length)*100)}%")
-            ys, ye = y - win_radius, y + win_radius + 1
-            xs, xe = x - win_radius, x + win_radius + 1
+        args_list.append((win_radius,W,big_loop_counter,big_loop_length,y,eps,K,big_loop_start_counter))
 
-            win_inds = inds[ys:ye, xs:xe].reshape(-1)
-            win_I = I_rgb[ys:ye, xs:xe, :].reshape(K, 3).astype(np.float32)
+    print(f"========== all processes are starting ! {big_loop_length} ===========")
+    n_processes = min(cpu_count()//2,len(args_list))
+    with Pool(
+        processes=n_processes,
+        initializer=init_worker,
+        initargs=(shared_I_buff.name, I_rgb.shape, I_rgb.dtype,
+                  shared_inds_buff.name, inds.shape, inds.dtype)
+    ) as pool:
+        results = pool.starmap(one_line_soft_matting, args_list)
 
-            mu = win_I.mean(axis=0, keepdims=True)           # 1x3
-            cov = (win_I - mu).T @ (win_I - mu) / K          # 3x3
-            cov_reg = cov + (eps / K) * np.eye(3)            # regularized
+    # cleaning buffers
+    shared_I_buff.close()
+    shared_I_buff.unlink()
+    shared_inds_buff.close()
+    shared_inds_buff.unlink()
 
-            # inverse covariance
-            inv = np.linalg.inv(cov_reg)
+    results = np.array(results)
 
-            # (I - 1/K) operator
-            X = win_I - mu                                   # Kx3
-            M = np.eye(K) - np.ones((K, K)) / K              # KxK
-
-            # L_w = M - X * inv * X^T / K
-            # compute X * inv * X^T efficiently
-            Xin = X @ inv                                    # Kx3
-            Q = (Xin @ X.T) / K                              # KxK
-            Lw = M + Q * 0.0                                 # start with M
-            Lw -= Q                                          # Lw = M - Q
-
-            # scatter-add to global Laplacian
-            ii = np.repeat(win_inds, K)
-            jj = np.tile(win_inds, K)
-            kk = Lw.reshape(-1)
-
-            start = total_loop_idx * len(ii)
-            end = (total_loop_idx + 1) * len(ii)
-            rows[start:end] = ii
-            cols[start:end] = jj
-            vals[start:end] = kk
-                    
-            total_loop_idx+=1
+    rows = results[:,:,0].reshape(-1)
+    cols = results[:,:,1].reshape(-1)
+    vals = results[:,:,2].reshape(-1)
 
     print("loading laplacian : 100% !")
     print("Putting it all in order (1/3)")
@@ -178,6 +169,70 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     # Clamp to [0,1]
     print("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
+
+def init_worker(I_name, I_shape, I_dtype, inds_name, inds_shape, inds_dtype):
+    """
+    Fonction d'initialisation pour chaque worker : on rattache les buffers partagés.
+    """
+    global I_rgb_shared, inds_shared
+    shared_I_buff = shared_memory.SharedMemory(name=I_name)
+    shared_inds_buff = shared_memory.SharedMemory(name=inds_name)
+    I_rgb_shared = np.ndarray(I_shape, dtype=I_dtype, buffer=shared_I_buff.buf)
+    inds_shared = np.ndarray(inds_shape, dtype=inds_dtype, buffer=shared_inds_buff.buf)
+
+def one_line_soft_matting(win_radius,W,total_loop_idx,total_loop_length,y,eps,K,big_loop_start_counter):
+    local_loop_total = (W - 2*win_radius)*(2*win_radius+1)*(2*win_radius+1)
+    rows = np.zeros(local_loop_total)
+    cols = np.zeros(local_loop_total)
+    vals = np.zeros(local_loop_total)
+    local_loop_idx = 0
+    big_loop_start_counter.value+=1
+    print(f"============= process started ! {big_loop_start_counter.value}/{total_loop_length} ==============",flush=True)
+    for x in range(win_radius, W - win_radius):
+        print(f"({local_loop_idx}/{W - 2*win_radius})")
+        ys, ye = y - win_radius, y + win_radius + 1
+        xs, xe = x - win_radius, x + win_radius + 1
+
+        print("ys, ye, xs, xe:", ys, ye, xs, xe, flush=True)
+        print("Shape slice:", I_rgb_shared[ys:ye, xs:xe, :].shape, flush=True)
+
+        win_inds = inds_shared[ys:ye, xs:xe].reshape(-1)
+        win_I = I_rgb_shared[ys:ye, xs:xe, :].reshape(K, 3)
+        print(f"attained the line !")
+        mu = win_I.mean(axis=0, keepdims=True)           # 1x3
+        cov = (win_I - mu).T @ (win_I - mu) / K          # 3x3
+        cov_reg = cov + (eps / K) * np.eye(3)            # regularized
+
+        # inverse covariance
+        inv = np.linalg.inv(cov_reg)
+
+        # (I - 1/K) operator
+        X = win_I - mu                                   # Kx3
+        M = np.eye(K) - np.ones((K, K)) / K              # KxK
+
+        # L_w = M - X * inv * X^T / K
+        # compute X * inv * X^T efficiently
+        Xin = X @ inv                                    # Kx3
+        Q = (Xin @ X.T) / K                              # KxK
+        Lw = M + Q * 0.0                                 # start with M
+        Lw -= Q                                          # Lw = M - Q
+
+        # scatter-add to global Laplacian
+        ii = np.repeat(win_inds, K)
+        jj = np.tile(win_inds, K)
+        kk = Lw.reshape(-1)
+
+        start = local_loop_idx * len(ii)
+        end = (local_loop_idx + 1) * len(ii)
+        rows[start:end] = ii
+        cols[start:end] = jj
+        vals[start:end] = kk
+                
+        local_loop_idx+=1
+    total_loop_idx.value+=1
+    print(f"============= process finished ! {total_loop_idx.value}/{total_loop_length} ==============",flush=True)
+    return [rows,cols,vals]
+
 
 def recover_radiance(I, A, t, t0=0.1):
     """Recover haze-free radiance J from hazy image I using Eq.(16).
