@@ -87,7 +87,7 @@ def estimate_transmission(I, A, omega=0.95, size=15):
     t = np.clip(t, 0.0, 1.0)                      # keep in [0,1]
     return t
 
-def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
+def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
     """
     Closed-form matting refinement of transmission (soft matting).
     I_rgb    : HxWx3 float32 in [0,1]  (guide: original color image)
@@ -113,7 +113,7 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4):
     args_list = []
     image_tot_prog = (H - 2*win_radius)*(W - 2*win_radius)
 
-    n_processes = cpu_count()
+    n_processes = min(cpu_count(),max_processes)
     numbers_columns_share = H - 2*win_radius
 
     for idx_process in range(n_processes):
@@ -221,7 +221,7 @@ def recover_radiance(I, A, t, t0=0.1):
     J = (I - A) / t[..., None] + A             # Eq.(16)
     return np.clip(J, 0.0, 1.0)                # keep valid range
 
-def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, t_size = 15, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1):
+def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, t_size = 15, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1, max_processes = 6):
     """
     Full single-image dehazing pipeline (He et al. 2009).
     img_path : path to hazy image
@@ -243,7 +243,7 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     try:
         I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
         
-        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, ratio = 0.5)
+        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, max_processes = max_processes,ratio = 0.5)
 
     except Exception as e:
         print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
@@ -261,7 +261,7 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     print(f"[INFO] Dehazed image saved to {out_path}")
     return J, t_refined, A
 
-def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray ,n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float,ratio : float = 0.5) -> list[np.ndarray]:
+def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray ,n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float, max_processes, ratio : float = 0.5) -> list[np.ndarray]:
     height,width = t_coarse.shape
     height_cut = height//n_cut_height
     width_cut = width//n_cut_width
@@ -298,7 +298,7 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
     for t_patch,i_patch,coord in zip(transmission_patches,I_rgb_patches,coords):
         print(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
         i_min, i_max, j_min, j_max = coord
-        refined_patch = soft_matting(i_patch,t_patch, win_radius, eps, lam)
+        refined_patch = soft_matting(i_patch,t_patch, win_radius, eps, lam, max_processes)
         refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
         t_refined_full[i_min:i_max,j_min:j_max] = refined_patch
         loading_total+=1
@@ -343,4 +343,4 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
 # Example usage
 if __name__ == "__main__":
     dehaze("hazed_images/4.jpg","dehazed_images",
-           dc_size = 5, w_radius = 2, patch_avg = 3)
+           dc_size = 5, w_radius = 2, patch_avg = 3,max_processes = 6)
