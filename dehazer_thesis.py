@@ -58,7 +58,7 @@ def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3): #by de
 
     return A
 
-def estimate_transmission(I, A, omega=0.95, size=15):
+def estimate_transmission(I, dark, A, omega=0.95):
     """Estimate transmission  t̃(x) = 1 - ω * min_c( min_{y∈Ω(x)} I^c(y)/A^c ).
     I: HxWx3 float32 in [0,1]  (BGR if read by cv2)
     A: (3,) float32 in [0,1]   (same channel order as I)
@@ -73,21 +73,12 @@ def estimate_transmission(I, A, omega=0.95, size=15):
     norm = I / np.maximum(A, 1e-6)               # avoid divide-by-zero
     norm = np.minimum(norm, 1.0)                 # clamp to [0,1] as in the paper's assumption
 
-    # --- per-channel patch minimum:  min_{y∈Ω(x)} (I^c(y)/A^c) ---
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
-    min_r = cv2.erode(norm[:, :, 0], kernel)     # channel R (or B if using cv2/BGR)
-    min_g = cv2.erode(norm[:, :, 1], kernel)
-    min_b = cv2.erode(norm[:, :, 2], kernel)
-
-    # --- then take min over channels:  min_c ( · ) ---
-    dark_norm = np.minimum(np.minimum(min_r, min_g), min_b)
-
     # --- final transmission:  t̃(x) = 1 - ω * dark_norm ---
-    t = 1.0 - omega * dark_norm
+    t = 1.0 - omega * dark
     t = np.clip(t, 0.0, 1.0)                      # keep in [0,1]
     return t
 
-def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
+def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
     """
     Closed-form matting refinement of transmission (soft matting).
     I_rgb    : HxWx3 float32 in [0,1]  (guide: original color image)
@@ -131,9 +122,9 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4, max_processe
 
     # cleaning buffers
 
-    rows = np.concatenate([r[0] for r in results])
-    cols = np.concatenate([r[1] for r in results])
-    vals = np.concatenate([r[2] for r in results])
+    rows = np.concatenate([r[0] for r in results]).astype(np.float32)
+    cols = np.concatenate([r[1] for r in results]).astype(np.float32)
+    vals = np.concatenate([r[2] for r in results]).astype(np.float32)
 
     print("loading laplacian : 100% !")
     print("Putting it all in order (1/3)")
@@ -149,7 +140,7 @@ def soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam=1e-4, max_processe
     print("loading laplacian : 100% ! Inverting matrix...")
 
     # Solve sparse linear system (slow !)
-    t_refined, info = cg(A, b, rtol=1e-6,maxiter=500)
+    t_refined, info = cg(A, b, rtol=1e-6, maxiter = maxiter)
     if info != 0:
         print("⚠️ CG did not fully converge, info =", info)
     t_refined = t_refined.reshape(H, W).astype(np.float32)
@@ -221,7 +212,7 @@ def recover_radiance(I, A, t, t0=0.1):
     J = (I - A) / t[..., None] + A             # Eq.(16)
     return np.clip(J, 0.0, 1.0)                # keep valid range
 
-def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, t_size = 15, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1, max_processes = 6):
+def dehaze(img_path, maxiter, custom_output_name, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1, max_processes = 6):
     """
     Full single-image dehazing pipeline (He et al. 2009).
     img_path : path to hazy image
@@ -237,13 +228,13 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     A = estimate_atmospheric_light(I, dark, top_percent, patch_avg)
 
     # 4. coarse transmission
-    t_coarse = estimate_transmission(I, A, omega, t_size)
+    t_coarse = estimate_transmission(I, dark, A, omega)
 
     # 5. refine transmission
     try:
         I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
         
-        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, max_processes = max_processes,ratio = 0.5)
+        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, maxiter, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, max_processes = max_processes,ratio = 0.5)
 
     except Exception as e:
         print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
@@ -256,12 +247,15 @@ def dehaze(img_path, out_dir="dehazed_results", dc_size = 15, top_percent = 0.00
     # 7. save result
     os.makedirs(out_dir, exist_ok=True)
     base_name = os.path.splitext(os.path.basename(img_path))[0]
-    out_path = os.path.join(out_dir, f"{base_name}_dehazed.png")
+    if custom_output_name is not None:
+        out_path = os.path.join(out_dir, f"{custom_output_name}_dehazed.png")
+    else :
+        out_path = os.path.join(out_dir, f"{base_name}_dehazed.png")
     cv2.imwrite(out_path, (J * 255).astype('uint8'))
     print(f"[INFO] Dehazed image saved to {out_path}")
     return J, t_refined, A
 
-def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray ,n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float, max_processes, ratio : float = 0.5) -> list[np.ndarray]:
+def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : int, n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float, max_processes, ratio : float = 0.5) -> list[np.ndarray]:
     height,width = t_coarse.shape
     height_cut = height//n_cut_height
     width_cut = width//n_cut_width
@@ -298,7 +292,7 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
     for t_patch,i_patch,coord in zip(transmission_patches,I_rgb_patches,coords):
         print(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
         i_min, i_max, j_min, j_max = coord
-        refined_patch = soft_matting(i_patch,t_patch, win_radius, eps, lam, max_processes)
+        refined_patch = soft_matting(i_patch,t_patch, maxiter, win_radius, eps, lam, max_processes)
         refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
         t_refined_full[i_min:i_max,j_min:j_max] = refined_patch
         loading_total+=1
@@ -342,5 +336,115 @@ def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray
 
 # Example usage
 if __name__ == "__main__":
-    dehaze("hazed_images/4.jpg","dehazed_images",
-           dc_size = 5, w_radius = 2, patch_avg = 3,max_processes = 6)
+    # dehaze(img_path = "./hazed_images/1.jpg",
+    #        maxiter = 10000,                         # number of maximal iteration before attaining the inverse
+    #        out_dir="./dehazed_results",             
+    #        dc_size = 15,                            # size of convolution kernel of the dark channel
+    #        top_percent = 0.001,                     # choose the top percent of the brightest pixels in the dark channel
+    #        patch_avg = 1,                           # size of the patch to average the pixel chosen to be the ambient light around its place 
+    #        omega = 0.95,                            # here to lessen the impact of the dark channel on the transmission light : the less it is, the less the dark channel influences the transmission map.                          # patch
+    #        w_radius = 1,                            # window of convolution for soft-matting
+    #        eps = 10E-7,                             # an epsilon in the formula of soft-matting
+    #        lam = 10E-4,                             # an lambda in the soft-matting formula
+    #        t0 = 0.1,                                # the inferior bound of the refined transmission
+    #        max_processes = 6,
+    #        custom_output_name = name                # custom saved file name if you want one
+    #        )                       # maximum number of processes. Be careful of your logical core number and your RAM.
+
+    img_path = "./hazed_images/4.jpg"
+
+    params_list = [
+        {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 15,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 1,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+            {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 15,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+            {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 15,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+            {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 10,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+            {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 5,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+            {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 30,
+    "top_percent": 0.001,
+    "patch_avg": 1,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 6
+    }
+    ,
+    ]
+    
+    for i,params in enumerate(params_list):
+        dehaze(**params,custom_output_name=f"{i}")
