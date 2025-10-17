@@ -14,7 +14,7 @@ from scipy.sparse.linalg import cg
 from multiprocessing import Pool, cpu_count, Manager, shared_memory
 import traceback
 
-def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted for different resolutions
+def dark_channel(im, size=15):
     """Compute the dark channel of an image.
     im: [H,W,3], uint8 or float in [0,1]
     size: patch size
@@ -24,8 +24,8 @@ def dark_channel(im, size=15): #size = 15 for ~600x400 images, can be adjusted f
     dark = cv2.erode(min_per_channel, kernel)
     return dark
 
-def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3): #by default patch(size = 3) averaging
-    """Estimate atmospheric light A as in He et al. (2009).
+def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
+    """Estimate atmospheric light A
     im   : HxWx3 float32 in [0,1] (BGR if read by cv2)
     dark : HxW   float32 in [0,1] dark channel
     top_percent : fraction of pixels (e.g., 0.001 = top 0.1%) from dark channel
@@ -37,10 +37,10 @@ def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3): #by de
     N = H * W
     k = max(1, int(N * top_percent))
 
-    # 1) pick top-k brightest in dark channel (most haze-opaque)
+    # pick top-k brightest in dark channel (most haze-opaque)
     dark_flat = dark.reshape(-1)
     idxs = np.argpartition(dark_flat, -k)[-k:]      # top-k indices, O(N)
-    # 2) among these, choose the pixel with the highest intensity in the input image
+    # among these, choose the pixel with the highest intensity in the input image
     im_flat = im.reshape(-1, 3)
     # brightness proxy: channel sum (robust to BGR/RGB ordering)
     brightness = im_flat[idxs].sum(axis=1)
@@ -67,11 +67,11 @@ def estimate_transmission(I, dark, A, omega=0.95):
     """
     # --- safety & broadcasting ---
     I = I.astype(np.float32)
-    A = A.reshape(1, 1, 3)                        # shape -> [1,1,3] for broadcasting
+    A = A.reshape(1, 1, 3)                       
 
     # --- channel-wise normalization I^c / A^c ---
-    norm = I / np.maximum(A, 1e-6)               # avoid divide-by-zero
-    norm = np.minimum(norm, 1.0)                 # clamp to [0,1] as in the paper's assumption
+    norm = I / np.maximum(A, 1e-6)               
+    norm = np.minimum(norm, 1.0)                 
 
     # --- final transmission:  t̃(x) = 1 - ω * dark_norm ---
     t = 1.0 - omega * dark
@@ -120,8 +120,6 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
     with Pool(processes=n_processes) as pool:
         results = pool.starmap(one_line_soft_matting, args_list)
 
-    # cleaning buffers
-
     rows = np.concatenate([r[0] for r in results]).astype(np.float32)
     cols = np.concatenate([r[1] for r in results]).astype(np.float32)
     vals = np.concatenate([r[2] for r in results]).astype(np.float32)
@@ -131,7 +129,6 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
     # (slow !)
     L = csr_matrix((vals, (rows, cols)), shape=(N, N))
     print("Putting it all in order (2/3)")
-    # (slow !)
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
     print("Putting it all in order (3/3)")
@@ -166,23 +163,23 @@ def one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min,
             xs, xe = x - win_radius, x + win_radius + 1
             win_inds = inds[ys:ye, xs:xe].reshape(-1)
             win_I = I_rgb[ys:ye, xs:xe, :].reshape(K, 3)
-            mu = win_I.mean(axis=0, keepdims=True)           # 1x3
-            cov = (win_I - mu).T @ (win_I - mu) / K          # 3x3
-            cov_reg = cov + (eps / K) * np.eye(3)            # regularized
+            mu = win_I.mean(axis=0, keepdims=True)           
+            cov = (win_I - mu).T @ (win_I - mu) / K          
+            cov_reg = cov + (eps / K) * np.eye(3)            
 
             # inverse covariance
             inv = np.linalg.inv(cov_reg)
 
             # (I - 1/K) operator
-            X = win_I - mu                                   # Kx3
-            M = np.eye(K) - np.ones((K, K)) / K              # KxK
+            X = win_I - mu                                   
+            M = np.eye(K) - np.ones((K, K)) / K              
 
             # L_w = M - X * inv * X^T / K
             # compute X * inv * X^T efficiently
-            Xin = X @ inv                                    # Kx3
-            Q = (Xin @ X.T) / K                              # KxK
-            Lw = M + Q * 0.0                                 # start with M
-            Lw -= Q                                          # Lw = M - Q
+            Xin = X @ inv                                    
+            Q = (Xin @ X.T) / K                              
+            Lw = M + Q * 0.0                                 
+            Lw -= Q                                         
 
             # scatter-add to global Laplacian
             ii = np.repeat(win_inds, K)
@@ -200,17 +197,17 @@ def one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min,
 
 
 def recover_radiance(I, A, t, t0=0.1):
-    """Recover haze-free radiance J from hazy image I using Eq.(16).
+    """Recover haze-free radiance J from hazy image I
     I: HxWx3 float32 in [0,1]
     A: (3,) float32 in [0,1]   (same channel order as I)
     t: HxW   float32 in [0,1]  (refined transmission)
     t0: lower bound to avoid noise amplification (typ. 0.1)
     """
     I = I.astype(np.float32)
-    A = A.reshape(1, 1, 3).astype(np.float32)  # broadcast A to each pixel
-    t = np.clip(t, t0, 1.0)                    # max(t(x), t0)
-    J = (I - A) / t[..., None] + A             # Eq.(16)
-    return np.clip(J, 0.0, 1.0)                # keep valid range
+    A = A.reshape(1, 1, 3).astype(np.float32)  
+    t = np.clip(t, t0, 1.0)                    
+    J = (I - A) / t[..., None] + A             
+    return np.clip(J, 0.0, 1.0)         
 
 def dehaze(img_path, maxiter, custom_output_name, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1, max_processes = 6):
     """
@@ -343,7 +340,7 @@ if __name__ == "__main__":
     #        top_percent = 0.001,                     # choose the top percent of the brightest pixels in the dark channel
     #        patch_avg = 1,                           # size of the patch to average the pixel chosen to be the ambient light around its place 
     #        omega = 0.95,                            # here to lessen the impact of the dark channel on the transmission light : the less it is, the less the dark channel influences the transmission map.                          # patch
-    #        w_radius = 1,                            # window of convolution for soft-matting
+    #        w_radius = 1,                            # window of convolution for soft-matting (2*win_radius+1)
     #        eps = 10E-7,                             # an epsilon in the formula of soft-matting
     #        lam = 10E-4,                             # an lambda in the soft-matting formula
     #        t0 = 0.1,                                # the inferior bound of the refined transmission
@@ -353,98 +350,57 @@ if __name__ == "__main__":
 
     img_path = "./hazed_images/4.jpg"
 
-    params_list = [
+    base_parameters = {
+    "img_path": img_path,
+    "maxiter": 10000,
+    "out_dir": "seriespicturesoutput",
+    "dc_size": 15,
+    "top_percent": 0.001,
+    "patch_avg": 2,
+    "omega": 0.95,
+    "w_radius": 2,
+    "eps": 10E-7,
+    "lam": 10E-4,
+    "t0": 0.1,
+    "max_processes": 10
+    }
+
+    modified_params_list = [
         {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 15,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 1,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.50,
+    "t0" : 0.01
     }
     ,
             {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 15,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.70,
+    "t0" : 0.01
     }
     ,
             {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 15,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.80,
+    "t0" : 0.01
     }
     ,
             {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 10,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.90,
+    "t0" : 0.01
     }
     ,
             {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 5,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.95,
+    "t0" : 0.01
     }
     ,
             {
-    "img_path": img_path,
-    "maxiter": 10000,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 30,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
-    "t0": 0.1,
-    "max_processes": 6
+    "omega" : 0.99,
+    "t0" : 0.01
     }
     ,
     ]
+
+    full_params_list = [
+        {**base_parameters, **mod} for mod in modified_params_list
+    ]
     
-    for i,params in enumerate(params_list):
+    for i,params in enumerate(full_params_list):
         dehaze(**params,custom_output_name=f"{i}")
