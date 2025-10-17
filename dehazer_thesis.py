@@ -8,6 +8,7 @@ Comments are in English.
 """
 import os
 import cv2
+from time import perf_counter
 import numpy as np
 from scipy.sparse import csr_matrix, eye
 from scipy.sparse.linalg import cg
@@ -402,5 +403,17 @@ if __name__ == "__main__":
         {**base_parameters, **mod} for mod in modified_params_list
     ]
     
-    for i,params in enumerate(full_params_list):
-        dehaze(**params,custom_output_name=f"{i}")
+    timings = []
+    
+    for i, params in enumerate(full_params_list):
+        start = perf_counter()
+        dehaze(**params, custom_output_name=f"{i}")
+        elapsed = perf_counter() - start
+        timings.append((i, elapsed, params["omega"], params["t0"]))
+
+    # print the summary of the time
+    print("\n========== Processing Summary ==========")
+    print(f"Total images processed: {len(timings)}")
+    for idx, time, omega, t0 in timings:
+        print(f"Image #{idx}: {time:.2f}s (omega={omega}, t0={t0})")
+    print("=====================================")
