@@ -59,7 +59,7 @@ def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
 
     return A
 
-def estimate_transmission(I, dark, A, omega=0.95):
+def estimate_transmission(I, dark, A, omega=0.95, size=15):
     """Estimate transmission  t̃(x) = 1 - ω * min_c( min_{y∈Ω(x)} I^c(y)/A^c ).
     I: HxWx3 float32 in [0,1]  (BGR if read by cv2)
     A: (3,) float32 in [0,1]   (same channel order as I)
@@ -75,9 +75,91 @@ def estimate_transmission(I, dark, A, omega=0.95):
     norm = np.minimum(norm, 1.0)                 
 
     # --- final transmission:  t̃(x) = 1 - ω * dark_norm ---
-    t = 1.0 - omega * dark
+    dark_norm = dark_channel(norm, size=size)
+    t = 1.0 - omega * dark_norm
     t = np.clip(t, 0.0, 1.0)                      # keep in [0,1]
     return t
+
+def guided_filter(I, p, r=20, eps=1e-3):
+    """
+    Edge-preserving guided filter (He et al., ECCV 2010).
+    I: guidance image, HxW (gray) or HxWx3 (RGB), float32 [0,1]
+    p: filtering input, HxW, float32 [0,1]
+    r: radius
+    eps: regularization
+    """
+    H, W = p.shape[:2]
+    p = p.astype(np.float32)
+
+    if I.ndim == 2:  # gray guidance
+        I = I.astype(np.float32)
+        ones = np.ones_like(p)
+
+        mean_I = cv2.boxFilter(I, -1, (2*r+1, 2*r+1))
+        mean_p = cv2.boxFilter(p, -1, (2*r+1, 2*r+1))
+        mean_Ip = cv2.boxFilter(I*p, -1, (2*r+1, 2*r+1))
+        cov_Ip  = mean_Ip - mean_I*mean_p
+
+        mean_II = cv2.boxFilter(I*I, -1, (2*r+1, 2*r+1))
+        var_I   = mean_II - mean_I*mean_I
+
+        a = cov_Ip / (var_I + eps)
+        b = mean_p - a * mean_I
+
+        mean_a = cv2.boxFilter(a, -1, (2*r+1, 2*r+1))
+        mean_b = cv2.boxFilter(b, -1, (2*r+1, 2*r+1))
+        q = mean_a * I + mean_b
+        return q.astype(np.float32)
+
+    else:  # RGB guidance
+        I = I.astype(np.float32)
+        I_b, I_g, I_r = I[:,:,0], I[:,:,1], I[:,:,2]
+        ones = np.ones_like(p)
+
+        # means
+        m_b = cv2.boxFilter(I_b, -1, (2*r+1, 2*r+1))
+        m_g = cv2.boxFilter(I_g, -1, (2*r+1, 2*r+1))
+        m_r = cv2.boxFilter(I_r, -1, (2*r+1, 2*r+1))
+        m_p = cv2.boxFilter(p,   -1, (2*r+1, 2*r+1))
+
+        # correlations
+        m_bb = cv2.boxFilter(I_b*I_b, -1, (2*r+1, 2*r+1)); cov_bb = m_bb - m_b*m_b
+        m_gg = cv2.boxFilter(I_g*I_g, -1, (2*r+1, 2*r+1)); cov_gg = m_gg - m_g*m_g
+        m_rr = cv2.boxFilter(I_r*I_r, -1, (2*r+1, 2*r+1)); cov_rr = m_rr - m_r*m_r
+        m_bg = cv2.boxFilter(I_b*I_g, -1, (2*r+1, 2*r+1)); cov_bg = m_bg - m_b*m_g
+        m_br = cv2.boxFilter(I_b*I_r, -1, (2*r+1, 2*r+1)); cov_br = m_br - m_b*m_r
+        m_gr = cv2.boxFilter(I_g*I_r, -1, (2*r+1, 2*r+1)); cov_gr = m_gr - m_g*m_r
+
+        m_bp = cv2.boxFilter(I_b*p, -1, (2*r+1, 2*r+1)); cov_bp = m_bp - m_b*m_p
+        m_gp = cv2.boxFilter(I_g*p, -1, (2*r+1, 2*r+1)); cov_gp = m_gp - m_g*m_p
+        m_rp = cv2.boxFilter(I_r*p, -1, (2*r+1, 2*r+1)); cov_rp = m_rp - m_r*m_p
+
+        # solve (Sigma + eps*I) a = cov_Ip (3x3 per-pixel)
+        det = (cov_bb+eps)*(cov_gg+eps)*(cov_rr+eps) \
+            + 2*cov_bg*cov_br*cov_gr \
+            - (cov_bb+eps)*cov_gr*cov_gr \
+            - (cov_gg+eps)*cov_br*cov_br \
+            - (cov_rr+eps)*cov_bg*cov_bg
+        inv_00 = (cov_gg+eps)*(cov_rr+eps) - cov_gr*cov_gr
+        inv_01 = cov_br*cov_gr - cov_bg*(cov_rr+eps)
+        inv_02 = cov_bg*cov_gr - (cov_gg+eps)*cov_br
+        inv_11 = (cov_bb+eps)*(cov_rr+eps) - cov_br*cov_br
+        inv_12 = cov_bg*cov_br - (cov_bb+eps)*cov_gr
+        inv_22 = (cov_bb+eps)*(cov_gg+eps) - cov_bg*cov_bg
+
+        a_b = ( inv_00*cov_bp + inv_01*cov_gp + inv_02*cov_rp ) / det
+        a_g = ( inv_01*cov_bp + inv_11*cov_gp + inv_12*cov_rp ) / det
+        a_r = ( inv_02*cov_bp + inv_12*cov_gp + inv_22*cov_rp ) / det
+
+        b = m_p - a_b*m_b - a_g*m_g - a_r*m_r
+
+        mean_ab = cv2.boxFilter(a_b, -1, (2*r+1, 2*r+1))
+        mean_ag = cv2.boxFilter(a_g, -1, (2*r+1, 2*r+1))
+        mean_ar = cv2.boxFilter(a_r, -1, (2*r+1, 2*r+1))
+        mean_b  = cv2.boxFilter(b,   -1, (2*r+1, 2*r+1))
+        q = mean_ab*I_b + mean_ag*I_g + mean_ar*I_r + mean_b
+        return q.astype(np.float32)
+
 
 def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
     """
@@ -210,7 +292,9 @@ def recover_radiance(I, A, t, t0=0.1):
     J = (I - A) / t[..., None] + A             
     return np.clip(J, 0.0, 1.0)         
 
-def dehaze(img_path, maxiter, custom_output_name, out_dir="dehazed_results", dc_size = 15, top_percent = 0.001, patch_avg = 1, omega = 0.95, w_radius = 1, eps = 10E-7, lam = 10E-4, t0 = 0.1, max_processes = 6):
+def dehaze(img_path, custom_output_name, out_dir="dehazed_results",
+           dc_size=15, top_percent=0.001, patch_avg=1,
+           omega=0.95, w_radius=2, eps=1e-3, t0=0.1):
     """
     Full single-image dehazing pipeline (He et al. 2009).
     img_path : path to hazy image
@@ -230,13 +314,12 @@ def dehaze(img_path, maxiter, custom_output_name, out_dir="dehazed_results", dc_
 
     # 5. refine transmission
     try:
-        I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
-        
-        t_refined = transmission_cut_apply_soft_matting(I_rgb, t_coarse, maxiter, n_cut_width = 1, n_cut_height = 1 ,win_radius = w_radius, eps = eps, lam = lam, max_processes = max_processes,ratio = 0.5)
-
+        # gray-scale guidance is faster and often sufficient; but RGB guidance can be used as well for potentially better results
+        I_guide_gray = cv2.cvtColor(I, cv2.COLOR_BGR2GRAY)
+        t_refined = guided_filter(I_guide_gray, t_coarse, r=w_radius*10, eps=max(1e-4, eps))
+        t_refined = np.clip(t_refined, 0.0, 1.0)
     except Exception as e:
-        print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
-        traceback.print_exc()
+        print(f"[WARN] Guided filtering failed ({e}), using coarse transmission.")
         t_refined = t_coarse
 
     # 6. recover scene radiance
@@ -349,23 +432,19 @@ if __name__ == "__main__":
     #        custom_output_name = name                # custom saved file name if you want one
     #        )                       # maximum number of processes. Be careful of your logical core number and your RAM.
 
-    img_path = r"C:\Users\22863\Desktop\git\ima1\ima_projet\dehazer\hazed_images\4.jpg"
+    img_path = r"C:\Users\22863\Desktop\git\ima1\ima_projet\dehazer\hazed_images\11.png"
 
     base_parameters = {
     "img_path": img_path,
-    "maxiter": 10000,
     "out_dir": "seriespicturesoutput",
     "dc_size": 15,
     "top_percent": 0.001,
-    "patch_avg": 2,
+    "patch_avg": 1,
     "omega": 0.95,
-    "w_radius": 2,
-    "eps": 10E-7,
-    "lam": 10E-4,
+    "w_radius": 1,
+    "eps": 1e-3,  
     "t0": 0.1,
-    
-    "max_processes": 6,
-    }
+}
 
     modified_params_list = [
         {
