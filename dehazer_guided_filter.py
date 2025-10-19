@@ -294,11 +294,14 @@ def recover_radiance(I, A, t, t0=0.1):
 
 def dehaze(img_path, custom_output_name, out_dir="dehazed_results",
            dc_size=15, top_percent=0.001, patch_avg=1,
-           omega=0.95, w_radius=2, eps=1e-3, t0=0.1):
+           omega=0.95, w_radius=2, eps=1e-3, t0=0.1,
+           refine_method="guided",      # "guided" or "soft"
+           lam=1e-4, maxiter=10000, max_processes=6):
     """
     Full single-image dehazing pipeline (He et al. 2009).
-    img_path : path to hazy image
-    out_dir  : directory to save dehazed result
+
+    refine_method : "guided" (fast guided filter) or "soft" (closed-form soft matting)
+    lam, maxiter, max_processes : used by soft matting
     """
     # 1. read image
     I = cv2.imread(img_path).astype('float32') / 255.0
@@ -312,14 +315,22 @@ def dehaze(img_path, custom_output_name, out_dir="dehazed_results",
     # 4. coarse transmission
     t_coarse = estimate_transmission(I, dark, A, omega)
 
-    # 5. refine transmission
+    # 5. refine transmission (choose method)
+    t_refined = t_coarse
     try:
-        # gray-scale guidance is faster and often sufficient; but RGB guidance can be used as well for potentially better results
-        I_guide_gray = cv2.cvtColor(I, cv2.COLOR_BGR2GRAY)
-        t_refined = guided_filter(I_guide_gray, t_coarse, r=w_radius*10, eps=max(1e-4, eps))
-        t_refined = np.clip(t_refined, 0.0, 1.0)
+        if refine_method == "soft":
+            # soft matting expects RGB guide
+            I_rgb = cv2.cvtColor(I, cv2.COLOR_BGR2RGB)
+            t_refined = soft_matting(I_rgb, t_coarse, maxiter,
+                                     win_radius=w_radius, eps=eps, lam=lam,
+                                     max_processes=max_processes)
+        else:  # "guided" (default)
+            # gray guidance is faster and often sufficient
+            I_guide_gray = cv2.cvtColor(I, cv2.COLOR_BGR2GRAY)
+            t_refined = guided_filter(I_guide_gray, t_coarse, r=w_radius*10, eps=max(1e-4, eps))
+            t_refined = np.clip(t_refined, 0.0, 1.0)
     except Exception as e:
-        print(f"[WARN] Guided filtering failed ({e}), using coarse transmission.")
+        print(f"[WARN] Transmission refinement ({refine_method}) failed ({e}), using coarse transmission.")
         t_refined = t_coarse
 
     # 6. recover scene radiance
@@ -330,10 +341,10 @@ def dehaze(img_path, custom_output_name, out_dir="dehazed_results",
     base_name = os.path.splitext(os.path.basename(img_path))[0]
     if custom_output_name is not None:
         out_path = os.path.join(out_dir, f"{custom_output_name}_dehazed.png")
-    else :
+    else:
         out_path = os.path.join(out_dir, f"{base_name}_dehazed.png")
     cv2.imwrite(out_path, (J * 255).astype('uint8'))
-    print(f"[INFO] Dehazed image saved to {out_path}")
+    print(f"[INFO] Dehazed image saved to {out_path}  (method={refine_method})")
     return J, t_refined, A
 
 def transmission_cut_apply_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : int, n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float, max_processes, ratio : float = 0.5) -> list[np.ndarray]:
@@ -431,69 +442,47 @@ if __name__ == "__main__":
     #        max_processes = 6,
     #        custom_output_name = name                # custom saved file name if you want one
     #        )                       # maximum number of processes. Be careful of your logical core number and your RAM.
-
-    img_path = r"C:\Users\22863\Desktop\git\ima1\ima_projet\dehazer\hazed_images\11.png"
-
+    img_path = r"C:\Users\22863\Desktop\git\ima1\ima_projet\dehazer\hazed_images\old_hazed_images\4.jpg"
     base_parameters = {
-    "img_path": img_path,
-    "out_dir": "seriespicturesoutput",
-    "dc_size": 15,
-    "top_percent": 0.001,
-    "patch_avg": 1,
-    "omega": 0.95,
-    "w_radius": 1,
-    "eps": 1e-3,  
-    "t0": 0.1,
-}
+        "img_path": img_path,
+        "out_dir": "seriespicturesoutput",
+        "dc_size": 15,
+        "top_percent": 0.001,
+        "patch_avg": 1,
+        "omega": 0.95,
+        "w_radius": 1,
+        "eps": 1e-3,
+        "t0": 0.1,
+        # set default refinement method here ("guided" or "soft")
+        "refine_method": "guided",
+        # soft-matting params (used only if refine_method=="soft")
+        "lam": 1e-4,
+        "maxiter": 10000,
+        "max_processes": 6,
+    }
 
+    # example modifications: you can change method per entry
     modified_params_list = [
-        {
-    "omega" : 0.50,
-    "t0" : 0.01
-    }
-    ,
-            {
-    "omega" : 0.70,
-    "t0" : 0.01
-    }
-    ,
-            {
-    "omega" : 0.80,
-    "t0" : 0.01
-    }
-    ,
-            {
-    "omega" : 0.90,
-    "t0" : 0.01
-    }
-    ,
-            {
-    "omega" : 0.95,
-    "t0" : 0.01
-    }
-    ,
-            {
-    "omega" : 0.99,
-    "t0" : 0.01
-    }
-    ,
+        {"omega": 0.50, "t0": 0.01, "refine_method": "guided"},
+        {"omega": 0.70, "t0": 0.01, "refine_method": "soft"},
+        {"omega": 0.80, "t0": 0.01, "refine_method": "guided"},
+        {"omega": 0.90, "t0": 0.01, "refine_method": "guided"},
+        {"omega": 0.95, "t0": 0.01, "refine_method": "soft"},
+        {"omega": 0.99, "t0": 0.01, "refine_method": "guided"},
     ]
 
-    full_params_list = [
-        {**base_parameters, **mod} for mod in modified_params_list
-    ]
-    
+    full_params_list = [{**base_parameters, **mod} for mod in modified_params_list]
+
     timings = []
-    
     for i, params in enumerate(full_params_list):
         start = perf_counter()
         dehaze(**params, custom_output_name=f"{i}")
         elapsed = perf_counter() - start
-        timings.append((i, elapsed, params["omega"], params["t0"]))
+        timings.append((i, elapsed, params["omega"], params["t0"], params.get("refine_method")))
 
     # print the summary of the time
     print("\n========== Processing Summary ==========")
     print(f"Total images processed: {len(timings)}")
-    for idx, time, omega, t0 in timings:
-        print(f"Image #{idx}: {time:.2f}s (omega={omega}, t0={t0})")
+    for idx, time, omega, t0, method in timings:
+        print(f"Image #{idx}: {time:.2f}s (omega={omega}, t0={t0}, method={method})")
     print("=====================================")
