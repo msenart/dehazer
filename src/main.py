@@ -1,15 +1,16 @@
-from dehazer import dehaze
+from dehazer import dehaze, dehazer_data
 from time import perf_counter
-from u_soft_matting_chunked import chunked_soft_matting     # kwargs | maxiter : int, n_cut_width : int, n_cut_height : int, win_radius : int, eps : float, lam : float, max_processes : int, ratio : float
-from u_soft_matting import soft_matting                     # kwargs | maxiter : int, win_radius : int, eps : int, lam : int, max_processes : int
-from u_guided_filter import guided_filter                   # kwargs | r : int, eps : float
+from u_soft_matting_chunked import chunked_soft_matting, chunk_soft_matting_data    # kwargs | maxiter : int, n_cut_width : int, n_cut_height : int, win_radius : int, eps : float, lam : float, max_processes : int, ratio : float
+from u_soft_matting import soft_matting, soft_matting_data                     # kwargs | maxiter : int, win_radius : int, eps : int, lam : int, max_processes : int
+from u_guided_filter import guided_filter, guided_filter_data                  # kwargs | r : int, eps : float
+from image_diff import ImageComparator
 from PySide6.QtWidgets import *
 import threading
-from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor
 from PySide6.QtCore import Qt, QSize
 import os
 import json
-
+import logging
 
 
 class WidgetFileAttente(QWidget):
@@ -26,13 +27,41 @@ class WidgetFileAttente(QWidget):
 
         # Liste de droite : terminés
         self.liste_terminees = QListWidget()
-        self.liste_terminees.itemClicked.connect(self.view_images)
+        self.liste_terminees.itemActivated.connect(self.view_images)
         self.liste_terminees.setIconSize(QSize(80, 80))
         self.liste_terminees.setAlternatingRowColors(True)
         self.liste_terminees.setSpacing(6)
         layout.addWidget(self.liste_terminees)
 
+        self.loadTransformedImages()
+
         self.setLayout(layout)
+
+    def loadTransformedImages(self):
+        base_dir = os.path.join(os.getcwd(), "seriespicturesoutput")
+        paths_list = [os.path.join(base_dir, path) for path in os.listdir(base_dir)]
+
+        for path_i in paths_list:
+            if os.path.isdir(path_i):
+                params_path = os.path.join(path_i, "params.json")
+                if os.path.exists(params_path):
+
+                    folder_name = os.path.basename(path_i)
+                    name = folder_name.split('_')[0]
+                    item = QListWidgetItem(f"{name}.png")
+                    item.folder_path = path_i
+
+                    img_path = os.path.join(path_i, f"{name}_initial.png")
+
+                    pixmap = QPixmap(img_path)
+                    if not pixmap.isNull():
+                        pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        icon = QIcon(pixmap)
+                        item.setIcon(icon)
+                    else:
+                        print("Image introuvable :", img_path)
+
+                    self.liste_terminees.addItem(item)
 
     # ----------------------------------------------------
     # Ajouter un traitement dans la file d’attente
@@ -69,11 +98,7 @@ class WidgetFileAttente(QWidget):
         self.liste_attente.takeItem(row)
     
     def view_images(self, item : QListWidgetItem):
-        v_image = VisualiseurImage(item.folder_path)
-
-import os
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QPushButton, QLabel
-from PySide6.QtGui import QPixmap
+        VisualiseurImage(item.folder_path)
 
 class VisualiseurImage(QMainWindow):
     image_pipeline = ["initial","dc","tcoarse","trefined","final"]
@@ -105,8 +130,8 @@ class VisualiseurImage(QMainWindow):
         self.layout_main.addWidget(self.visualiser)
         self.layout_visual = QHBoxLayout(self.visualiser)
 
-        self.left = QPushButton("dc")
-        self.right = QPushButton("final")
+        self.left = QPushButton("final")
+        self.right = QPushButton("dc")
         self.left.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.right.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
@@ -243,18 +268,9 @@ class ZoneDepotImage(QLabel):
 
 class WidgetAlgorithme(QWidget):
     ALGO_PARAMS = {
-        "chunked_soft_matting": {
-            "maxiter": "int", "n_cut_width": "int", "n_cut_height": "int",
-            "win_radius": "int", "eps": "float", "lam": "float",
-            "max_processes": "int", "ratio": "float"
-        },
-        "soft_matting": {
-            "maxiter": "int", "win_radius": "int", "eps": "float",
-            "lam": "float", "max_processes": "int"
-        },
-        "guided_filter": {
-            "r": "int", "eps": "float"
-        }
+        "chunked_soft_matting": chunk_soft_matting_data.ALGO_PARAMS,
+        "soft_matting": soft_matting_data.ALGO_PARAMS,
+        "guided_filter": guided_filter_data.ALGO_PARAMS
     }
 
     DEHAZE_PARAMS = {
@@ -271,36 +287,12 @@ class WidgetAlgorithme(QWidget):
         "guided_filter": guided_filter
     }
 
-    DEFAULT_DEHAZE_PARAMS = {
-    "dc_size": 15,
-    "top_percent": 0.001,
-    "patch_avg": 2,
-    "omega": 0.95,
-    "t0": 0.01
-    }
+    DEFAULT_DEHAZE_PARAMS = dehazer_data.DEFAULT_DEHAZE_PARAMS
 
     DEFAULT_ALGO_PARAMS = {
-        "chunked_soft_matting": {
-            "maxiter": 5000,
-            "n_cut_width": 1,
-            "n_cut_height": 2,
-            "win_radius": 3,
-            "eps": 1e-7,
-            "lam": 1e-4,
-            "max_processes": 6,
-            "ratio": 0.5
-        },
-        "soft_matting": {
-            "maxiter": 2000,
-            "win_radius": 2,
-            "eps": 1e-7,
-            "lam": 1e-4,
-            "max_processes": 6
-        },
-        "guided_filter": {
-            "r": 5,
-            "eps": 0.01
-        }
+        "chunked_soft_matting": chunk_soft_matting_data.DEFAULT_ALGO_PARAMS,
+        "soft_matting": soft_matting_data.DEFAULT_ALGO_PARAMS,
+        "guided_filter": guided_filter_data.DEFAULT_ALGO_PARAMS
     }
 
     def __init__(self):
@@ -309,27 +301,69 @@ class WidgetAlgorithme(QWidget):
         self.param_inputs = {}
 
         layout = QVBoxLayout(self)
-
-        # Sélecteur d'algorithme
+        layout.setAlignment(Qt.AlignTop)
+        
+        # --- Sélecteur d'algorithme ---
         self.combo = QComboBox()
         self.combo.addItems(self.ALGO_PARAMS.keys())
         self.combo.currentTextChanged.connect(self.on_algo_changed)
         layout.addWidget(QLabel("Algorithme :"))
         layout.addWidget(self.combo)
 
-        # Formulaire de paramètres
+        # --- Formulaire des paramètres ---
         self.form = QFormLayout()
         layout.addLayout(self.form)
 
-        # Bouton de lancement
+        # --- Bouton de lancement ---
         self.btn_run = QPushButton("Lancer le traitement")
+        self.btn_run.setStyleSheet("""
+            QPushButton {
+                background-color: #599EFF;
+                color: white;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #3E6FB5;
+            }
+        """)
         layout.addWidget(self.btn_run)
+
+        # --- Terminal intégré ---
+        self.terminal = QTextEdit()
+        self.terminal.setReadOnly(True)
+        self.terminal.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #E3E3E3;
+                font-family: Consolas, monospace;
+                font-size: 10px;
+                border-radius: 6px;
+                padding: 8px;
+            }
+        """)
+        self.terminal.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(QLabel("Terminal :"))
+        layout.addWidget(self.terminal, 1)  # prend le reste de l’espace
 
         # Initialiser avec le premier algo
         self.on_algo_changed(self.combo.currentText())
 
+        # Création du logger
+        self.logger = logging.getLogger("widget_logger")
+        self.logger.setLevel(logging.INFO)
+
+        if not self.logger.hasHandlers():
+            handler = QTextEditLogger(self.terminal)
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+
+    # --- Mise à jour du formulaire quand l’algo change ---
     def on_algo_changed(self, algo_name):
         self.current_algo = algo_name
+
         # Vider l'ancien formulaire
         while self.form.count():
             item = self.form.takeAt(0)
@@ -337,22 +371,21 @@ class WidgetAlgorithme(QWidget):
                 item.widget().deleteLater()
         self.param_inputs.clear()
 
-            # --- Paramètres de dehaze ---
+        # Paramètres généraux de dehaze
         for name in self.DEHAZE_PARAMS:
-            champ = QLineEdit()
-            valeur = str(WidgetAlgorithme.DEFAULT_DEHAZE_PARAMS.get(name, ""))
-            champ.setText(valeur)
+            champ = QLineEdit(str(self.DEFAULT_DEHAZE_PARAMS.get(name, "")))
             self.param_inputs[name] = champ
             self.form.addRow(name, champ)
 
-        # --- Paramètres spécifiques de l'algo ---
+        # Paramètres spécifiques à l’algo choisi
         for name in self.ALGO_PARAMS[algo_name]:
-            champ = QLineEdit()
-            valeur = str(WidgetAlgorithme.DEFAULT_ALGO_PARAMS[algo_name].get(name, ""))
-            champ.setText(valeur)
+            champ = QLineEdit(str(self.DEFAULT_ALGO_PARAMS[algo_name].get(name, "")))
             self.param_inputs[name] = champ
             self.form.addRow(name, champ)
 
+        self.log(f"🔄 Paramètres chargés pour : {algo_name}")
+
+    # --- Récupérer tous les paramètres du formulaire ---
     def get_current_parameters(self):
         params = {}
         for key, champ in self.param_inputs.items():
@@ -371,7 +404,101 @@ class WidgetAlgorithme(QWidget):
     def get_selected_algorithm(self):
         return self.ALGO_FUNCS[self.current_algo]
 
+    # --- Méthode pour afficher des logs dans le terminal ---
+    def log(self, message: str):
+        """Ajoute une ligne de texte dans le terminal intégré."""
+        self.terminal.append(message)
+        # Déplacer le curseur à la fin pour que le texte défile
+        cursor = self.terminal.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.terminal.setTextCursor(cursor)
+
+class WidgetDifference(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Comparateur d'images")
+        self.setMinimumSize(1300, 800)
+
+        self.image1_path = None
+        self.image2_path = None
+
+        # Layout principal
+        layout_principal = QVBoxLayout(self)
+
+        # 1️⃣ Zones de dépôt
+        layout_drop = QHBoxLayout()
+        self.zone1 = ZoneDepotImage(self._on_image1_dropped)
+        self.zone2 = ZoneDepotImage(self._on_image2_dropped)
+        layout_drop.addWidget(self.zone1)
+        layout_drop.addWidget(self.zone2)
+        layout_principal.addLayout(layout_drop)
+
+        # 2️⃣ Bouton comparer
+        self.btn_compare = QPushButton("Comparer les deux images")
+        self.btn_compare.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border-radius: 8px;
+                padding: 10px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.btn_compare.clicked.connect(self.compare_images)
+        layout_principal.addWidget(self.btn_compare, alignment=Qt.AlignCenter)
+
+        # 3️⃣ Résultats
+        layout_resultats = QHBoxLayout()
+        titres = ["Canal Bleu", "Canal Vert", "Canal Rouge"]
+        self.labels_result = []
+
+        for titre in titres:
+            bloc = QVBoxLayout()
+            lbl_titre = QLabel(titre)
+            lbl_titre.setAlignment(Qt.AlignCenter)
+            lbl_titre.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+            lbl_image = QLabel()
+            lbl_image.setAlignment(Qt.AlignCenter)
+            lbl_image.setMinimumSize(250, 250)
+            lbl_image.setStyleSheet("border: 1px solid #ccc; background-color: #f8f8f8;")
+            bloc.addWidget(lbl_titre)
+            bloc.addWidget(lbl_image)
+            layout_resultats.addLayout(bloc)
+            self.labels_result.append(lbl_image)
+
+        layout_principal.addLayout(layout_resultats)
+
+    # 🔹 Callbacks
+    def _on_image1_dropped(self, path):
+        self.image1_path = path
+
+    def _on_image2_dropped(self, path):
+        self.image2_path = path
+
+    # 🔹 Fonction principale
+    def compare_images(self):
+        if not self.image1_path or not self.image2_path:
+            QMessageBox.warning(self, "Erreur", "Dépose deux images avant de comparer.")
+            return
+
+        try:
+            diff_b, diff_g, diff_r = ImageComparator.compare_images(
+                self.image1_path, self.image2_path
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", str(e))
+            return
+
+        # Convertir en QPixmap et afficher
+        for lbl, canal in zip(self.labels_result[:3], [diff_b, diff_g, diff_r]):
+            qimg = QImage(canal.data, canal.shape[1], canal.shape[0], canal.strides[0], QImage.Format_Grayscale8)
+            lbl.setPixmap(QPixmap.fromImage(qimg).scaled(lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
 class FenetrePrincipale(QMainWindow):
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Traitement d'image - File d'attente séquentielle")
@@ -387,6 +514,7 @@ class FenetrePrincipale(QMainWindow):
 
         self.zone_image = ZoneDepotImage(self.on_image_dropped)
         self.widget_algo = WidgetAlgorithme()
+        self.logger = logging.getLogger("widget_logger")
 
         layout_traitement.addWidget(self.zone_image, 2)
         layout_traitement.addWidget(self.widget_algo, 1)
@@ -395,9 +523,13 @@ class FenetrePrincipale(QMainWindow):
         # Onglet 2 : file d’attente
         self.widget_file_attente = WidgetFileAttente()
 
+        # Onglet 3 : Différence d'images
+        self.widget_difference = WidgetDifference()
+
         # Ajout des onglets
         self.tabs.addTab(self.widget_traitement, "🧩 Traitement d'image")
         self.tabs.addTab(self.widget_file_attente, "📜 File d'attente")
+        self.tabs.addTab(self.widget_difference, "➖ Différence d'images")
 
         # --- Gestion de la file ---
         self.image_path = None
@@ -437,7 +569,7 @@ class FenetrePrincipale(QMainWindow):
     # ---------------------------------------------------------
     def _lancer_prochain_traitement(self):
         if not self.queue:
-            print("✅ File d’attente vide.")
+            self.logger.info("✅ File d’attente vide.")
             self.traitement_en_cours = False
             return
 
@@ -445,7 +577,7 @@ class FenetrePrincipale(QMainWindow):
         path, algo, params, item = self.queue.pop(0)
 
         def run():
-            print(f"🚀 Démarrage du traitement : {path}")
+            self.logger.info(f"🚀 Démarrage du traitement : {path}")
             folder_path = None
             try:
                 # Extraire les paramètres spécifiques
@@ -483,26 +615,38 @@ class FenetrePrincipale(QMainWindow):
                 }
                 with open(json_path, "w") as f:
                     json.dump(params_to_save, f, indent=4)
-                print(f"💾 Paramètres sauvegardés dans {json_path}")
+                self.logger.info(f"💾 Paramètres sauvegardés dans {json_path}")
 
             except Exception as e:
-                print(f"❌ Erreur pendant le traitement : {e}")
+                self.logger.warning(f"❌ Erreur pendant le traitement : {e}")
 
             finally:
                 if folder_path:
                     self.widget_file_attente.marquer_comme_termine(item, folder_path)
 
-                print(f"✅ Terminé : {path}")
+                self.logger.info(f"✅ Terminé : {path}")
                 self.traitement_en_cours = False
                 self._lancer_prochain_traitement()  # lance le suivant automatiquement
 
         threading.Thread(target=run, daemon=True).start()
 
+class QTextEditLogger(logging.Handler):
+    """Handler qui écrit les messages de logging dans un QTextEdit."""
+    def __init__(self, text_edit : QTextEdit):
+        super().__init__()
+        self.text_edit = text_edit
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.text_edit.append(msg)
+        cursor = self.text_edit.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.text_edit.setTextCursor(cursor)
 
 if __name__ == "__main__":
-
     app = QApplication([])
     mw = FenetrePrincipale()
+    terminal = mw.widget_algo
     mw.show()
     app.exec()
 

@@ -2,6 +2,22 @@ import numpy as np
 from scipy.sparse import csr_matrix, eye
 from scipy.sparse.linalg import cg
 from multiprocessing import Pool, cpu_count, Manager
+import logging
+
+logger = logging.getLogger("widget_logger")
+
+class soft_matting_data:
+    ALGO_PARAMS = {
+            "maxiter": "int", "win_radius": "int", "eps": "float",
+            "lam": "float", "max_processes": "int"
+        }
+    DEFAULT_ALGO_PARAMS = {
+            "maxiter": 2000,
+            "win_radius": 2,
+            "eps": 1e-7,
+            "lam": 1e-4,
+            "max_processes": 6
+        }
 
 def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min,y_max,eps,K):
     '''
@@ -70,6 +86,7 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
     Returns:
         t_refined : HxW float32
     """
+
     H, W, _ = I_rgb.shape
     N = H * W
     win_size = (2 * win_radius + 1)
@@ -84,7 +101,7 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
     args_list = []
 
     n_processes = min(cpu_count(),max_processes)
-    print("n_processes : ", n_processes)
+    logger.info(f"n_processes : {n_processes} ")
     numbers_columns_share = H - 2*win_radius
 
     for idx_process in range(n_processes):
@@ -95,7 +112,7 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
         args_list.append((I_rgb,inds,win_radius,W,process_idx,n_processes,y_min,y_max,eps,K))
         process_idx+=1
 
-    print(f"========== all processes are starting ! {n_processes} ===========")
+    logger.info(f"========== all processes are starting ! {n_processes} ===========")
 
     with Pool(processes=n_processes) as pool:
         results = pool.starmap(_one_line_soft_matting, args_list)
@@ -104,26 +121,26 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
     cols = np.concatenate([r[1] for r in results]).astype(np.float32)
     vals = np.concatenate([r[2] for r in results]).astype(np.float32)
 
-    print("loading laplacian : 100% !")
-    print("Putting it all in order (1/3)")
+    logger.info("loading laplacian : 100% !")
+    logger.info("Putting it all in order (1/3)")
     # (slow !)
     L = csr_matrix((vals, (rows, cols)), shape=(N, N))
-    print("Putting it all in order (2/3)")
+    logger.info("Putting it all in order (2/3)")
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
-    print("Putting it all in order (3/3)")
+    logger.info("Putting it all in order (3/3)")
     b = lam * t_coarse.reshape(-1)
 
-    print("loading laplacian : 100% ! Inverting matrix...")
+    logger.info("loading laplacian : 100% ! Inverting matrix...")
 
     # Solve sparse linear system (slow !)
     t_refined, info = cg(A, b, rtol=1e-6, maxiter = maxiter)
     if info != 0:
-        print("⚠️ CG did not fully converge, info =", info)
+        logger.warning(f"⚠️ CG did not fully converge, info = {info}")
     t_refined = t_refined.reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
-    print("soft matting completed ! (3/3)")
+    logger.info("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
 
 

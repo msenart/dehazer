@@ -8,6 +8,18 @@ Comments are in English.
 """
 import cv2
 import numpy as np
+import logging
+
+logger = logging.getLogger("widget_logger")
+
+class guided_filter_data:
+    ALGO_PARAMS = {
+            "r": "int", "eps": "float"
+        }
+    DEFAULT_ALGO_PARAMS = {
+            "r": 5,
+            "eps": 0.01
+        }
 
 ### MAIN FUNCTION BELOW ========================================================================================================
 

@@ -11,6 +11,18 @@ import cv2
 import numpy as np
 import traceback
 from typing import Callable, Any
+import logging
+
+logger = logging.getLogger("widget_logger")
+
+class dehazer_data:
+    DEFAULT_DEHAZE_PARAMS = {
+    "dc_size": 15,
+    "top_percent": 0.001,
+    "patch_avg": 2,
+    "omega": 0.95,
+    "t0": 0.01
+    }
 
 def dark_channel(im, size=15):
     """Compute the dark channel of an image.
@@ -127,7 +139,7 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         t_refined = np.clip(t_refined, 0.0, 1.0)
         t_refined_i = norm_gray(t_refined)
     except Exception as e:
-        print(f"[WARN] Soft matting failed ({e}), using coarse transmission.")
+        logger.info(f"Soft matting failed ({e}), using coarse transmission.")
         traceback.print_exc()
         t_refined = t_coarse
         t_refined_i = norm_gray(t_refined)
@@ -143,7 +155,7 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
 
     base_name = os.path.splitext(os.path.basename(img_path))[0]
     total_path = os.path.join(out_dir,f"{base_name}_pipeline")
-    print(f"[INFO] Dehazed image saved to {base_name}_dehazed.png")
+    logger.info(f"Dehazed image saved to {base_name}_dehazed.png")
     
     os.makedirs(total_path,exist_ok=True)
     cv2.imwrite(os.path.join(total_path,f"{base_name}_initial.png"),initial_image)

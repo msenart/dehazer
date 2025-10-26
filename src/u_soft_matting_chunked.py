@@ -2,6 +2,26 @@ import numpy as np
 from scipy.sparse import csr_matrix, eye
 from scipy.sparse.linalg import cg
 from multiprocessing import Pool, Manager
+import logging
+
+logger = logging.getLogger("widget_logger")
+
+class chunk_soft_matting_data:
+    ALGO_PARAMS = {
+            "maxiter": "int", "n_cut_width": "int", "n_cut_height": "int",
+            "win_radius": "int", "eps": "float", "lam": "float",
+            "max_processes": "int", "ratio": "float"
+        }
+    DEFAULT_ALGO_PARAMS = {
+            "maxiter": 5000,
+            "n_cut_width": 1,
+            "n_cut_height": 2,
+            "win_radius": 3,
+            "eps": 1e-7,
+            "lam": 1e-4,
+            "max_processes": 6,
+            "ratio": 0.5
+        }
 
 def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, maxiter = 5000):
     """
@@ -18,7 +38,7 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
     N = H * W
     win_size = (2 * win_radius + 1)
     K = win_size * win_size  # number of pixels per window
-    results_size = (H - 2*win_radius) * (W - 2 * win_radius) * (2 * win_radius + 1)**2 * K
+    results_size = (H - 2*win_radius) * (W - 2*win_radius) * K * K
 
     # flatten helpers
     inds = np.arange(N).reshape(H, W)
@@ -62,35 +82,35 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
             cols[start:end] = jj
             vals[start:end] = kk
 
-    print("loading laplacian : 100% !")
-    print("Putting it all in order (1/3)")
+    logger.info("loading laplacian : 100% !")
+    logger.info("Putting it all in order (1/3)")
     # (slow !)
     L = csr_matrix((vals, (rows, cols)), shape=(N, N))
-    print("Putting it all in order (2/3)")
+    logger.info("Putting it all in order (2/3)")
     # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
-    print("Putting it all in order (3/3)")
+    logger.info("Putting it all in order (3/3)")
     b = lam * t_coarse.reshape(-1)
 
-    print("loading laplacian : 100% ! Inverting matrix...")
+    logger.info("loading laplacian : 100% ! Inverting matrix...")
 
     # Solve sparse linear system (slow !)
     t_refined, info = cg(A, b, rtol=1e-6, maxiter = maxiter)
     if info != 0:
-        print("⚠️ CG did not fully converge, info =", info)
+        logger.warning(f"⚠️ CG did not fully converge, info = {info}")
     t_refined = t_refined.reshape(H, W).astype(np.float32)
 
     # Clamp to [0,1]
-    print("soft matting completed ! (3/3)")
+    logger.info("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
 
 def _patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total,maxiter):
     started_counter.value+=1
-    print(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
+    logger.info(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
     refined_patch = _chunk_soft_matting(I_patch,t_patch, win_radius, eps, lam, maxiter)
     refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
     loading_counter.value+=1
-    print(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
+    logger.info(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
     return refined_patch,i_min,i_max,j_min,j_max
 
 ### MAIN FUNCTION BELOW ========================================================================================================
@@ -103,7 +123,7 @@ def chunked_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : in
     I_rgb_patches = []
     coords = []
 
-    print("cutting the image before doing soft matting")
+    logger.info("cutting the image before doing soft matting")
 
     for i in range(n_cut_height):
         for j in range(n_cut_width):
@@ -122,21 +142,21 @@ def chunked_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : in
             I_rgb_patches.append(I_rgb[i_min_idx:i_max_idx,j_min_idx:j_max_idx,:])
             coords.append((i_min_idx, i_max_idx, j_min_idx, j_max_idx))
 
-    print([m.shape for m in transmission_patches])
-    print([m.shape for m in I_rgb_patches])
+    logger.info([m.shape for m in transmission_patches])
+    logger.info([m.shape for m in I_rgb_patches])
 
     loading_total = len(transmission_patches)
     loading_counter = 0
     t_refined_full = np.zeros((height, width), dtype=np.float32)
 
     # for t_patch,i_patch,coord in zip(transmission_patches,I_rgb_patches,coords):
-    #     print(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
+    #     logger.info(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
     #     i_min, i_max, j_min, j_max = coord
     #     refined_patch = soft_matting(i_patch,t_patch, maxiter, win_radius, eps, lam, max_processes)
     #     refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
     #     t_refined_full[i_min:i_max,j_min:j_max] = refined_patch
     #     loading_total+=1
-    #     print(f"============= patch {t_patch.shape} finished ! : {loading_counter}/{loading_total} =============")
+    #     logger.info(f"============= patch {t_patch.shape} finished ! : {loading_counter}/{loading_total} =============")
     
     # return np.clip(t_refined_full,0.0,1.0)
 
@@ -151,7 +171,7 @@ def chunked_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : in
     with Pool(processes=max_processes) as pool:
         results = pool.starmap(_patch_soft_matting_process, args_list)
 
-    print(f"============= patch all treated ! =============")
+    logger.info("============= patch all treated ! =============")
 
     t_refined_full = np.zeros((height, width), dtype=np.float32)
 

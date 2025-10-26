@@ -1,0 +1,19 @@
+{
+    "dehaze_params": {
+        "dc_size": 15,
+        "top_percent": 0.001,
+        "patch_avg": 2,
+        "omega": 0.95,
+        "t0": 0.01
+    },
+    "algo_params": {
+        "maxiter": 5000,
+        "n_cut_width": 1,
+        "n_cut_height": 2,
+        "win_radius": 3,
+        "eps": 1e-07,
+        "lam": 0.0001,
+        "max_processes": 6,
+        "ratio": 0.5
+    }
+}
