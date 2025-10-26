@@ -5,3 +5,4 @@ numba
 opencv-python
 scipy
 multiprocessing
+PySide6
