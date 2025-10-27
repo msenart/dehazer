@@ -12,6 +12,7 @@ import numpy as np
 import traceback
 from typing import Callable, Any
 import logging
+import json
 
 logger = logging.getLogger("widget_logger")
 
@@ -121,18 +122,17 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
 
     # --- 1. read image ---
     I = cv2.imread(img_path).astype('float32') / 255.0
-    initial_image = norm_color(I)
 
     # --- 2. dark channel ---
     dark = dark_channel(I, dc_size)
-    dark_channel_i = norm_gray(dark)
+    
 
     # --- 3. atmospheric light ---
     A = estimate_atmospheric_light(I, dark, top_percent, patch_avg)
 
     # --- 4. coarse transmission ---
     t_coarse = estimate_transmission(I, dark, A, omega)
-    t_coarse_i = norm_gray(t_coarse)
+    
     # --- 5. refine transmission with soft matting ---
     try:
         t_refined = smoothing_method(I,t_coarse,**kwargs)
@@ -142,19 +142,65 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         logger.info(f"Soft matting failed ({e}), using coarse transmission.")
         traceback.print_exc()
         t_refined = t_coarse
-        t_refined_i = norm_gray(t_refined)
+        
 
     # --- 6. recover scene radiance ---
     J = recover_radiance(I, A, t_refined, t0)
-    final_image = norm_color(J)
+    
 
     # --- 7. create the big folder if doesn't exist ---
     os.makedirs(out_dir, exist_ok=True)
 
     # Save final dehazed result
+    initial_image = norm_color(I)
+    dark_channel_i = norm_gray(dark)
+    t_coarse_i = norm_gray(t_coarse)
+    t_refined_i = norm_gray(t_refined)
+    final_image = norm_color(J)
+
+    # --- Écrire params.json dans le dossier de sortie ---
+    params_to_save = {
+        "dehaze_params": {
+            "smoothing algorithm" : smoothing_method.__name__,
+            "dc_size": dc_size,
+            "top_percent": top_percent,
+            "patch_avg": patch_avg,
+            "omega": omega,
+            "t0": t0
+        },
+        "algo_params": kwargs
+    }
 
     base_name = os.path.splitext(os.path.basename(img_path))[0]
-    total_path = os.path.join(out_dir,f"{base_name}_pipeline")
+
+    i = 0
+    while True:
+        if i == 0:
+            total_path = os.path.join(out_dir, f"{base_name}_pipeline")
+        else:
+            total_path = os.path.join(out_dir, f"{base_name}_pipeline_{i}")
+        logger.info(f"cacaprout : {total_path}")
+        json_path = os.path.join(total_path, "params.json")
+
+        if not os.path.exists(total_path):
+            break
+        else :
+            if not os.path.exists(json_path):
+                break
+
+        logger.info(f"cacaprout2 : {json_path}")
+
+        with open(json_path, "r") as f:
+            older_params = json.load(f)
+
+        if older_params != params_to_save:
+            i += 1
+            continue
+        else:
+            break
+
+    logger.info(f"💾 Paramètres sauvegardés dans {json_path}")
+
     logger.info(f"Dehazed image saved to {base_name}_dehazed.png")
     
     os.makedirs(total_path,exist_ok=True)
@@ -164,6 +210,9 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
     cv2.imwrite(os.path.join(total_path,f"{base_name}_trefined.png"),t_refined_i)
     cv2.imwrite(os.path.join(total_path,f"{base_name}_final.png"),final_image)
     
+    with open(json_path, "w") as f:
+        json.dump(params_to_save, f, indent=4)
+
     return total_path
 
 

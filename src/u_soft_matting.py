@@ -14,8 +14,8 @@ class soft_matting_data:
     DEFAULT_ALGO_PARAMS = {
             "maxiter": 2000,
             "win_radius": 2,
-            "eps": 1e-7,
-            "lam": 1e-4,
+            "eps": 1e-5,
+            "lam": 1e-3,
             "max_processes": 6
         }
 
@@ -23,7 +23,7 @@ def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min
     '''
     The image is split into many strands, which are calculated separately to increase the speed. This is one process of them.
     '''
-    results_size = (y_max - y_min) * (W - 2 * win_radius) * (2 * win_radius + 1)**2 * K
+    results_size = (y_max - y_min) * (W - 2 * win_radius) * K * K
 
     rows = np.zeros(results_size)
     cols = np.zeros(results_size)

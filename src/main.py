@@ -44,8 +44,8 @@ class WidgetFileAttente(QWidget):
         for path_i in paths_list:
             if os.path.isdir(path_i):
                 params_path = os.path.join(path_i, "params.json")
-                if os.path.exists(params_path):
 
+                if os.path.exists(params_path):
                     folder_name = os.path.basename(path_i)
                     name = folder_name.split('_')[0]
                     item = QListWidgetItem(f"{name}.png")
@@ -542,14 +542,14 @@ class FenetrePrincipale(QMainWindow):
     # ---------------------------------------------------------
     def on_image_dropped(self, path):
         self.image_path = path
-        print(f"Image déposée : {path}")
+        self.logger.info(f"Image déposée : {path}")
 
     # ---------------------------------------------------------
     # Ajout à la file d’attente
     # ---------------------------------------------------------
     def ajouter_a_la_file(self):
         if not self.image_path:
-            print("Aucune image déposée.")
+            self.logger.info("Aucune image déposée.")
             return
 
         algo = self.widget_algo.get_selected_algorithm()
@@ -558,7 +558,7 @@ class FenetrePrincipale(QMainWindow):
         # Crée un item dans la file d’attente
         item = self.widget_file_attente.ajouter_traitement(self.image_path, algo.__name__)
         self.queue.append((self.image_path, algo, params, item))
-        print(f"🧩 Ajouté à la file : {self.image_path} ({algo.__name__})")
+        self.logger.info(f"🧩 Ajouté à la file : {self.image_path} ({algo.__name__})")
 
         # Démarre le traitement si aucun n'est en cours
         if not self.traitement_en_cours:
@@ -600,23 +600,6 @@ class FenetrePrincipale(QMainWindow):
                     show_steps=True,
                     kwargs=params
                 )
-
-                # --- Écrire params.json dans le dossier de sortie ---
-                json_path = os.path.join(folder_path, "params.json")
-                params_to_save = {
-                    "dehaze_params": {
-                        "dc_size": dc_size,
-                        "top_percent": top_percent,
-                        "patch_avg": patch_avg,
-                        "omega": omega,
-                        "t0": t0
-                    },
-                    "algo_params": params
-                }
-                with open(json_path, "w") as f:
-                    json.dump(params_to_save, f, indent=4)
-                self.logger.info(f"💾 Paramètres sauvegardés dans {json_path}")
-
             except Exception as e:
                 self.logger.warning(f"❌ Erreur pendant le traitement : {e}")
 
