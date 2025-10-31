@@ -1,5 +1,6 @@
 {
     "dehaze_params": {
+        "smoothing algorithm": "guided_filter",
         "dc_size": 15,
         "top_percent": 0.001,
         "patch_avg": 2,
@@ -7,7 +8,7 @@
         "t0": 0.01
     },
     "algo_params": {
-        "r": 5,
+        "r": 10,
         "eps": 0.01
     }
 }

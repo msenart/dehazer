@@ -6,12 +6,13 @@ from u_guided_filter import guided_filter, guided_filter_data                  #
 from image_diff import ImageComparator
 from PySide6.QtWidgets import *
 import threading
-from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor, QDrag, QColor
+from PySide6.QtCore import Qt, QMimeData, QSize
+import numpy as np
 import os
 import json
 import logging
-
+import sys
 
 class WidgetFileAttente(QWidget):
     def __init__(self):
@@ -47,7 +48,7 @@ class WidgetFileAttente(QWidget):
 
                 if os.path.exists(params_path):
                     folder_name = os.path.basename(path_i)
-                    name = folder_name.split('_')[0]
+                    name = folder_name.split('_pipeline')[0]
                     item = QListWidgetItem(f"{name}.png")
                     item.folder_path = path_i
 
@@ -227,7 +228,7 @@ class ZoneDepotImage(QLabel):
     def __init__(self, on_image_dropped):
         super().__init__()
         self.on_image_dropped = on_image_dropped
-        self.setText("🖼️ Glisse une image ici")
+        self.setText("🖼️ Glisse ou clique pour choisir une image")
         self.setAlignment(Qt.AlignCenter)
         self.setStyleSheet("""
             QLabel {
@@ -237,15 +238,36 @@ class ZoneDepotImage(QLabel):
                 color: #666;
                 font-size: 16px;
             }
+            QLabel:hover {
+                background-color: #e0e0e0;
+            }
         """)
         self.setAcceptDrops(True)
-        self.original_pixmap = None  # stocke le pixmap original
-        self.setMinimumSize(400, 300)  # éviter taille trop petite
+        self.original_pixmap = None
+        self.setMinimumSize(400, 300)
+
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.choisir_image()
+        super().mousePressEvent(event)
+
+    def choisir_image(self):
+        """Ouvre une boîte de dialogue pour sélectionner une image"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choisir une image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        if file_path:
+            self.afficher_image(file_path)
+            self.on_image_dropped(file_path)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
-            if any(url.toLocalFile().lower().endswith(('.png', '.jpg', '.jpeg')) for url in urls):
+            if any(url.toLocalFile().lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif')) for url in urls):
                 event.acceptProposedAction()
         else:
             event.ignore()
@@ -253,18 +275,19 @@ class ZoneDepotImage(QLabel):
     def dropEvent(self, event):
         for url in event.mimeData().urls():
             fichier = url.toLocalFile()
-            if os.path.splitext(fichier)[1].lower() in ('.png', '.jpg', '.jpeg'):
-                self.original_pixmap = QPixmap(fichier)
-                self.setPixmap(self.original_pixmap.scaled(
-                    self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            if os.path.splitext(fichier)[1].lower() in ('.png', '.jpg', '.jpeg', '.bmp', '.gif'):
+                self.afficher_image(fichier)
                 self.on_image_dropped(fichier)
                 break
 
-    def resizeEvent(self, event):
+    def afficher_image(self, chemin):
+        self.original_pixmap = QPixmap(chemin)
         if self.original_pixmap:
             self.setPixmap(self.original_pixmap.scaled(
-                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        super().resizeEvent(event)
+                self.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            ))
 
 class WidgetAlgorithme(QWidget):
     ALGO_PARAMS = {
@@ -450,26 +473,10 @@ class WidgetDifference(QWidget):
         self.btn_compare.clicked.connect(self.compare_images)
         layout_principal.addWidget(self.btn_compare, alignment=Qt.AlignCenter)
 
-        # 3️⃣ Résultats
-        layout_resultats = QHBoxLayout()
-        titres = ["Canal Bleu", "Canal Vert", "Canal Rouge"]
+        # 3️⃣ Zone d'affichage des résultats
+        self.layout_resultats = QHBoxLayout()
+        layout_principal.addLayout(self.layout_resultats)
         self.labels_result = []
-
-        for titre in titres:
-            bloc = QVBoxLayout()
-            lbl_titre = QLabel(titre)
-            lbl_titre.setAlignment(Qt.AlignCenter)
-            lbl_titre.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-            lbl_image = QLabel()
-            lbl_image.setAlignment(Qt.AlignCenter)
-            lbl_image.setMinimumSize(250, 250)
-            lbl_image.setStyleSheet("border: 1px solid #ccc; background-color: #f8f8f8;")
-            bloc.addWidget(lbl_titre)
-            bloc.addWidget(lbl_image)
-            layout_resultats.addLayout(bloc)
-            self.labels_result.append(lbl_image)
-
-        layout_principal.addLayout(layout_resultats)
 
     # 🔹 Callbacks
     def _on_image1_dropped(self, path):
@@ -485,17 +492,360 @@ class WidgetDifference(QWidget):
             return
 
         try:
-            diff_b, diff_g, diff_r = ImageComparator.compare_images(
-                self.image1_path, self.image2_path
-            )
+            # --- On nettoie les anciennes images affichées ---
+            while self.layout_resultats.count():
+                item = self.layout_resultats.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+            self.labels_result.clear()
+
+            # --- Compare via ta fonction existante ---
+            result = ImageComparator.compare_images(self.image1_path, self.image2_path)
+
+            # --- Si ta fonction renvoie un mode explicite (optionnel) ---
+            mode = result.get("mode", None)
+
+            # --- CAS 1 : image noir et blanc ---
+            if mode == "grayscale" or "diff" in result:
+                diff = result["diff"]
+                self._afficher_resultat_unique(diff)
+
+            # --- CAS 2 : image couleur ---
+            elif mode == "color" or all(k in result for k in ["diff_r", "diff_g", "diff_b"]):
+                diff_b = result["diff_b"]
+                diff_g = result["diff_g"]
+                diff_r = result["diff_r"]
+                self._afficher_resultats_couleur(diff_b, diff_g, diff_r)
+
+            else:
+                QMessageBox.warning(self, "Type inconnu", "Le format de comparaison n’est pas reconnu.")
+                return
+
         except Exception as e:
             QMessageBox.critical(self, "Erreur", str(e))
             return
 
-        # Convertir en QPixmap et afficher
-        for lbl, canal in zip(self.labels_result[:3], [diff_b, diff_g, diff_r]):
-            qimg = QImage(canal.data, canal.shape[1], canal.shape[0], canal.strides[0], QImage.Format_Grayscale8)
-            lbl.setPixmap(QPixmap.fromImage(qimg).scaled(lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    # 🔹 Affichage d’un seul canal (noir et blanc)
+    def _afficher_resultat_unique(self, diff):
+        bloc = QVBoxLayout()
+        titre = QLabel("Différence (Niveaux de gris)")
+        titre.setAlignment(Qt.AlignCenter)
+        titre.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+
+        qimg = QImage(
+            diff.data, diff.shape[1], diff.shape[0],
+            diff.strides[0], QImage.Format_Grayscale8
+        )
+
+        lbl_image = ClickableImage(QPixmap.fromImage(qimg))
+        lbl_image.setAlignment(Qt.AlignCenter)
+        lbl_image.setMinimumSize(300, 300)
+        lbl_image.setStyleSheet("border: 1px solid #ccc; background-color: #f8f8f8;")
+
+        bloc.addWidget(titre)
+        bloc.addWidget(lbl_image)
+        self.layout_resultats.addLayout(bloc)
+        self.labels_result.append(lbl_image)
+
+    # 🔹 Affichage des trois canaux couleur
+    def _afficher_resultats_couleur(self, diff_b, diff_g, diff_r):
+        titres = ["Canal Bleu", "Canal Vert", "Canal Rouge"]
+
+        for titre, canal in zip(titres, [diff_b, diff_g, diff_r]):
+            bloc = QVBoxLayout()
+            lbl_titre = QLabel(titre)
+            lbl_titre.setAlignment(Qt.AlignCenter)
+            lbl_titre.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+
+            qimg = QImage(
+                canal.data, canal.shape[1], canal.shape[0],
+                canal.strides[0], QImage.Format_Grayscale8
+            )
+
+            lbl_image = ClickableImage(QPixmap.fromImage(qimg))
+            lbl_image.setAlignment(Qt.AlignCenter)
+            lbl_image.setMinimumSize(250, 250)
+            lbl_image.setStyleSheet("border: 1px solid #ccc; background-color: #f8f8f8;")
+
+            bloc.addWidget(lbl_titre)
+            bloc.addWidget(lbl_image)
+            self.layout_resultats.addLayout(bloc)
+            self.labels_result.append(lbl_image)
+
+# Pipeline comparison
+class DirsListSidebar(QListWidget):
+    def __init__(self):
+        super().__init__()
+        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.setDragEnabled(True)
+        self.setStyleSheet("""
+            QListWidget {
+                background-color: #2E3440;
+                color: #ECEFF4;
+                border: none;
+                padding: 8px;
+            }
+            QListWidget::item {
+                padding: 8px;
+                margin: 4px 0;
+                border-radius: 6px;
+            }
+            QListWidget::item:hover {
+                background-color: #4C566A;
+            }
+            QListWidget::item:selected {
+                background-color: #5E81AC;
+            }
+        """)
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if item:
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setText(item.folder_path)
+            drag.setMimeData(mime_data)
+            drag.exec(Qt.DropAction.CopyAction)
+
+class ImageComparisonColumn(QWidget):
+    def __init__(self, img1_path, img2_path, title):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setSpacing(5)
+        label_title = QLabel(title)
+        label_title.setSizePolicy(QSizePolicy.Policy.MinimumExpanding,QSizePolicy.Policy.Minimum)
+        label_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label_title.setStyleSheet("font-weight: bold; color: #2E3440;")
+
+        for path in [img1_path, img2_path]:
+            pixmap = QPixmap(path)
+            img_label = ClickableImage(pixmap)
+            img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            img_label.setStyleSheet("background: white; border: 1px solid #D8DEE9; border-radius: 8px;")
+            layout.addWidget(img_label)
+        
+        # Difference
+
+        idiff_dict = ImageComparator.compare_images(img1_path, img2_path)
+        if idiff_dict["mode"] == "grayscale":
+            diff = idiff_dict["diff"]
+            diff = np.ascontiguousarray(np.clip(diff, 0, 255).astype(np.uint8))
+
+            height, width, channels = diff.shape
+            if channels != 3:
+                raise ValueError("Attendu 3 canaux pour l'image RGB.")
+
+            bytesPerLine = diff.strides[0]
+            qimg = QImage(diff.data, width, height, bytesPerLine, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qimg)
+            img_label = ClickableImage(pixmap)
+            img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            img_label.setStyleSheet("background: white; border: 1px solid #D8DEE9; border-radius: 8px;")
+            layout.addWidget(img_label)
+
+        elif idiff_dict["mode"] == "color":
+            placeholder = QLabel("Différence non affichée (image couleur)")
+            placeholder.setFixedSize(250, 250)
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setStyleSheet("background: #ECEFF4; border: 1px solid #D8DEE9; border-radius: 8px; color: #4C566A;")
+            layout.addWidget(placeholder)
+
+        layout.insertWidget(0, label_title)
+
+class PicturesDropArea(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+        self.folder_buffer_list = []
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+
+        self.inner_widget = QWidget()
+        self.inner_layout = QHBoxLayout(self.inner_widget)
+        self.scroll.setWidget(self.inner_widget)
+
+        self.layout = QVBoxLayout(self)
+        self.label = QLabel("💡 Déposez deux pipelines ici pour les comparer")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("color: #4C566A; font-size: 14px; padding: 20px;")
+
+        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.scroll)
+
+        self.setStyleSheet("background-color: #ECEFF4; border: 2px dashed #5E81AC; border-radius: 10px;")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        folder_path = event.mimeData().text()
+        self.folder_buffer_list.append(folder_path)
+        self.label.setText(f"📂 {len(self.folder_buffer_list)} dossier(s) reçu(s)")
+        event.acceptProposedAction()
+        if len(self.folder_buffer_list) == 2:
+            self.compareTwoImages()
+
+    def compareTwoImages(self):
+        path1, path2 = self.folder_buffer_list
+        self.folder_buffer_list.clear()
+
+        for i in reversed(range(self.inner_layout.count())):
+            w = self.inner_layout.takeAt(i).widget()
+            if w:
+                w.deleteLater()
+
+        order = ["initial", "dc", "tcoarse", "trefined", "final"]
+        paths1 = sorted(
+            [os.path.join(path1, f) for f in os.listdir(path1) if f.endswith(".png")],
+            key=lambda x: next((i for i, o in enumerate(order) if o in x), len(order))
+        )
+        paths2 = sorted(
+            [os.path.join(path2, f) for f in os.listdir(path2) if f.endswith(".png")],
+            key=lambda x: next((i for i, o in enumerate(order) if o in x), len(order))
+        )
+
+        for i, stage in enumerate(order):
+            if i < len(paths1) and i < len(paths2):
+                column = ImageComparisonColumn(paths1[i], paths2[i], stage.upper())
+                self.inner_layout.addWidget(column)
+
+class WidgetComparateurImage(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Comparateur de Pipelines")
+        self.setStyleSheet("font-family: 'Segoe UI';")
+
+        self.sidebar = QFrame()
+        self.sidebar.setFixedWidth(220)
+        sidebar_layout = QVBoxLayout(self.sidebar)
+
+        # --- Titre + bouton refresh ---
+        title_layout = QHBoxLayout()
+        title = QLabel("📁 Pipelines")
+        title.setStyleSheet("color: black; font-size: 16px; font-weight: bold; margin: 10px;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_layout.addWidget(title)
+
+        refresh_btn = QPushButton("🔄")
+        refresh_btn.setFixedSize(24, 24)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #D8DEE9;
+            }
+        """)
+        refresh_btn.clicked.connect(self.loadTransformedImages)
+        title_layout.addWidget(refresh_btn)
+
+        sidebar_layout.addLayout(title_layout)
+
+        # --- Liste des pipelines ---
+        self.sidebar_itemList = DirsListSidebar()
+        sidebar_layout.addWidget(self.sidebar_itemList)
+
+        self.pictures_drop_area = PicturesDropArea()
+
+        main_layout = QHBoxLayout(self)
+        main_layout.addWidget(self.sidebar)
+        main_layout.addWidget(self.pictures_drop_area)
+
+        self.loadTransformedImages()
+
+    def loadTransformedImages(self):
+        self.sidebar_itemList.clear()
+        base_dir = os.path.join(os.getcwd(), "seriespicturesoutput")
+        if not os.path.exists(base_dir):
+            return
+
+        for folder in os.listdir(base_dir):
+            folder_path = os.path.join(base_dir, folder)
+            if not os.path.isdir(folder_path):
+                continue
+
+            params_path = os.path.join(folder_path, "params.json")
+            if not os.path.exists(params_path):
+                continue
+
+            name = folder.split('_pipeline')[0]
+            item = QListWidgetItem(f"{name}.png")
+            item.folder_path = folder_path
+
+            img_path = os.path.join(folder_path, f"{name}_initial.png")
+            pixmap = QPixmap(img_path)
+            if not pixmap.isNull():
+                icon = QIcon(pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio))
+                item.setIcon(icon)
+
+            self.sidebar_itemList.addItem(item)
+
+class ClickableImage(QLabel):
+    def __init__(self, pixmap: QPixmap, max_size=250, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("border: 1px solid #D8DEE9; border-radius: 8px; background: white;")
+        self.full_pixmap = pixmap
+
+        w, h = pixmap.width(), pixmap.height()
+        if max(w, h) > max_size:
+            pixmap = pixmap.scaled(max_size, max_size, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        self.setPixmap(pixmap)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.show_full_image()
+
+    def show_full_image(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Aperçu image")
+        dialog.setModal(True)
+
+        layout = QHBoxLayout(dialog)
+
+        self.lbl = QLabel()
+        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.original_pixmap = self.full_pixmap.scaled(800, 800,
+                                                       Qt.AspectRatioMode.KeepAspectRatio,
+                                                       Qt.TransformationMode.SmoothTransformation)
+        self.lbl.setPixmap(self.original_pixmap)
+        layout.addWidget(self.lbl)
+
+        slider = QSlider(Qt.Orientation.Vertical)
+        slider.setMinimum(-100)
+        slider.setMaximum(100)
+        slider.setValue(0)
+        slider.valueChanged.connect(self.adjust_brightness)
+        layout.addWidget(slider)
+
+        dialog.setLayout(layout)
+        dialog.exec()
+
+    def adjust_brightness(self, value):
+        """Ajuste la luminosité rapidement avec numpy (PyQt6 compatible)."""
+        qimg = self.original_pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+        width, height = qimg.width(), qimg.height()
+
+        # Copier les données dans un tableau numpy modifiable
+        ptr = qimg.constBits()
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4)).copy()
+
+        # Convertir en int16 pour éviter overflow lors de l'addition
+        arr_rgb = arr[..., :3].astype(np.int16)
+        arr_rgb = np.clip(arr_rgb + value, 0, 255).astype(np.uint8)
+        arr[..., :3] = arr_rgb
+
+        # Créer un nouveau QImage
+        new_img = QImage(arr.data, width, height, QImage.Format.Format_RGBA8888)
+        self.lbl.setPixmap(QPixmap.fromImage(new_img))
+# Main window
 
 class FenetrePrincipale(QMainWindow):
 
@@ -526,11 +876,14 @@ class FenetrePrincipale(QMainWindow):
         # Onglet 3 : Différence d'images
         self.widget_difference = WidgetDifference()
 
+        # Onglet 4 : Différence de pipelines
+        self.widget_difference_pipeline = WidgetComparateurImage()
+
         # Ajout des onglets
         self.tabs.addTab(self.widget_traitement, "🧩 Traitement d'image")
         self.tabs.addTab(self.widget_file_attente, "📜 File d'attente")
         self.tabs.addTab(self.widget_difference, "➖ Différence d'images")
-
+        self.tabs.addTab(self.widget_difference_pipeline, "🔍 Différence de pipeline")
         # --- Gestion de la file ---
         self.image_path = None
         self.queue = []          # liste de (path, algo, params, item)
@@ -626,6 +979,7 @@ class QTextEditLogger(logging.Handler):
         cursor.movePosition(QTextCursor.End)
         self.text_edit.setTextCursor(cursor)
 
+    
 if __name__ == "__main__":
     app = QApplication([])
     mw = FenetrePrincipale()

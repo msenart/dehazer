@@ -5,7 +5,7 @@ import json
 from skimage import metrics, filters, feature
 from scipy import ndimage
 
-from dehazer.dehazer_guided_filter import dehaze
+from dehazer import dehaze
 
 def numpy_to_python(obj):
     """Convert numpy types to Python native types for JSON serialization"""

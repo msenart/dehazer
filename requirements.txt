@@ -1,8 +1,7 @@
-Pillow
 matplotlib
 numpy
-numba
 opencv-python
 scipy
 multiprocessing
 PySide6
+skimage

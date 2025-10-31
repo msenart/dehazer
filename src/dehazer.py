@@ -179,7 +179,6 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
             total_path = os.path.join(out_dir, f"{base_name}_pipeline")
         else:
             total_path = os.path.join(out_dir, f"{base_name}_pipeline_{i}")
-        logger.info(f"cacaprout : {total_path}")
         json_path = os.path.join(total_path, "params.json")
 
         if not os.path.exists(total_path):
@@ -187,8 +186,6 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         else :
             if not os.path.exists(json_path):
                 break
-
-        logger.info(f"cacaprout2 : {json_path}")
 
         with open(json_path, "r") as f:
             older_params = json.load(f)
