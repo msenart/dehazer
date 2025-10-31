@@ -688,16 +688,33 @@ class PicturesDropArea(QWidget):
         event.acceptProposedAction()
         if len(self.folder_buffer_list) == 2:
             self.compareTwoImages()
+    
+    def clear_inner_layout(self):
+        """Supprime tous les widgets et layouts de self.inner_layout."""
+        while self.inner_layout.count():
+            item = self.inner_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._delete_layout(item.layout())
+
+    def _delete_layout(self, layout):
+        """Supprime récursivement un layout et ses enfants."""
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._delete_layout(item.layout())
+        del layout
 
     def compareTwoImages(self):
         path1, path2 = self.folder_buffer_list
         self.folder_buffer_list.clear()
 
-        for i in reversed(range(self.inner_layout.count())):
-            w = self.inner_layout.takeAt(i).widget()
-            if w:
-                w.deleteLater()
+        self.clear_inner_layout()
 
+        # Récupérer et trier les images
         order = ["initial", "dc", "tcoarse", "trefined", "final"]
         paths1 = sorted(
             [os.path.join(path1, f) for f in os.listdir(path1) if f.endswith(".png")],
@@ -706,7 +723,72 @@ class PicturesDropArea(QWidget):
         paths2 = sorted(
             [os.path.join(path2, f) for f in os.listdir(path2) if f.endswith(".png")],
             key=lambda x: next((i for i, o in enumerate(order) if o in x), len(order))
-        )
+    )
+
+        # Charger les paramètres JSON
+        with open(os.path.join(path1, "params.json"), "r") as f:
+            params1 = json.load(f)
+        with open(os.path.join(path2, "params.json"), "r") as f:
+            params2 = json.load(f)
+
+        paramsdehaze1 = params1.get("dehaze_params", {})
+        paramsalgo1 = params1.get("algo_params", {})
+        paramsdehaze2 = params2.get("dehaze_params", {})
+        paramsalgo2 = params2.get("algo_params", {})
+
+        # Créer le layout vertical principal
+        main_vlayout = QVBoxLayout()
+        main_vlayout.setAlignment(Qt.AlignTop)
+
+        # Widget pour pipeline 1
+        widget1 = QWidget()
+        layout1 = QVBoxLayout(widget1)
+        layout1.setAlignment(Qt.AlignTop)
+
+        dehaze_title1 = QLabel("Dehaze Params (Pipeline 1)")
+        dehaze_title1.setStyleSheet("font-weight: bold; font-size: 12px; margin-bottom: 2px;")
+        layout1.addWidget(dehaze_title1)
+        for k, v in paramsdehaze1.items():
+            lbl = QLabel(f"{k}: {v}")
+            lbl.setStyleSheet("font-size: 11px; margin-left: 4px;")
+            layout1.addWidget(lbl)
+
+        algo_title1 = QLabel("Algorithm Params (Pipeline 1)")
+        algo_title1.setStyleSheet("font-weight: bold; font-size: 12px; margin-top: 4px;")
+        layout1.addWidget(algo_title1)
+        for k, v in paramsalgo1.items():
+            lbl = QLabel(f"{k}: {v}")
+            lbl.setStyleSheet("font-size: 11px; margin-left: 4px;")
+            layout1.addWidget(lbl)
+
+        # Widget pour pipeline 2
+        widget2 = QWidget()
+        layout2 = QVBoxLayout(widget2)
+        layout2.setAlignment(Qt.AlignTop)
+
+        dehaze_title2 = QLabel("Dehaze Params (Pipeline 2)")
+        dehaze_title2.setStyleSheet("font-weight: bold; font-size: 12px; margin-bottom: 2px;")
+        layout2.addWidget(dehaze_title2)
+        for k, v in paramsdehaze2.items():
+            lbl = QLabel(f"{k}: {v}")
+            lbl.setStyleSheet("font-size: 11px; margin-left: 4px;")
+            layout2.addWidget(lbl)
+
+        algo_title2 = QLabel("Algorithm Params (Pipeline 2)")
+        algo_title2.setStyleSheet("font-weight: bold; font-size: 12px; margin-top: 4px;")
+        layout2.addWidget(algo_title2)
+        for k, v in paramsalgo2.items():
+            lbl = QLabel(f"{k}: {v}")
+            lbl.setStyleSheet("font-size: 11px; margin-left: 4px;")
+            layout2.addWidget(lbl)
+
+        # Ajouter les deux widgets au layout principal vertical
+        main_vlayout.addWidget(widget1)
+        main_vlayout.addSpacing(10)
+        main_vlayout.addWidget(widget2)
+
+        # Ajouter le layout vertical principal à self.inner_layout
+        self.inner_layout.addLayout(main_vlayout)
 
         for i, stage in enumerate(order):
             if i < len(paths1) and i < len(paths2):
@@ -787,16 +869,25 @@ class WidgetComparateurImage(QWidget):
             self.sidebar_itemList.addItem(item)
 
 class ClickableImage(QLabel):
+    """QLabel cliquable affichant une image redimensionnée, 
+    avec aperçu, réglage de luminosité et sauvegarde."""
+
     def __init__(self, pixmap: QPixmap, max_size=250, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("border: 1px solid #D8DEE9; border-radius: 8px; background: white;")
         self.full_pixmap = pixmap
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("""
+            border: 1px solid #D8DEE9;
+            border-radius: 8px;
+            background: white;
+        """)
 
-        w, h = pixmap.width(), pixmap.height()
-        if max(w, h) > max_size:
-            pixmap = pixmap.scaled(max_size, max_size, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
+        if max(pixmap.width(), pixmap.height()) > max_size:
+            pixmap = pixmap.scaled(
+                max_size, max_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
         self.setPixmap(pixmap)
 
     def mousePressEvent(self, event):
@@ -805,44 +896,56 @@ class ClickableImage(QLabel):
 
     def show_full_image(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle("Aperçu image")
+        dialog.setWindowTitle("Aperçu de l'image")
         dialog.setModal(True)
 
-        layout = QHBoxLayout(dialog)
+        main_layout = QHBoxLayout(dialog)
 
-        self.lbl = QLabel()
-        self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.original_pixmap = self.full_pixmap.scaled(800, 800,
-                                                       Qt.AspectRatioMode.KeepAspectRatio,
-                                                       Qt.TransformationMode.SmoothTransformation)
+        # Image agrandie
+        self.lbl = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
+        self.original_pixmap = self.full_pixmap.scaled(
+            800, 800,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
         self.lbl.setPixmap(self.original_pixmap)
-        layout.addWidget(self.lbl)
+        main_layout.addWidget(self.lbl)
 
-        slider = QSlider(Qt.Orientation.Vertical)
-        slider.setMinimum(-100)
-        slider.setMaximum(100)
-        slider.setValue(0)
+        # Colonne pour bouton + slider
+        right_layout = QVBoxLayout()
+        save_btn = QPushButton("💾", clicked=self.save_current_image)
+        right_layout.addWidget(save_btn)
+        
+        slider = QSlider(Qt.Orientation.Vertical, minimum=-100, maximum=100, value=0)
         slider.valueChanged.connect(self.adjust_brightness)
-        layout.addWidget(slider)
+        right_layout.addWidget(slider)
 
-        dialog.setLayout(layout)
+        right_layout.addStretch()  # pousse les widgets vers le haut
+        main_layout.addLayout(right_layout)
+
+        dialog.setLayout(main_layout)
         dialog.exec()
 
+    def save_current_image(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Sauvegarder l'image",
+            "",
+            "Images (*.png)"
+        )
+        if file_path:
+            self.lbl.pixmap().save(file_path)
+
     def adjust_brightness(self, value):
-        """Ajuste la luminosité rapidement avec numpy (PyQt6 compatible)."""
         qimg = self.original_pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
         width, height = qimg.width(), qimg.height()
 
-        # Copier les données dans un tableau numpy modifiable
-        ptr = qimg.constBits()
-        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4)).copy()
+        arr = np.frombuffer(qimg.bits(), dtype=np.uint8).reshape((height, width, 4)).copy()
 
-        # Convertir en int16 pour éviter overflow lors de l'addition
-        arr_rgb = arr[..., :3].astype(np.int16)
-        arr_rgb = np.clip(arr_rgb + value, 0, 255).astype(np.uint8)
-        arr[..., :3] = arr_rgb
+        rgb = arr[..., :3].astype(np.int16)
+        rgb = np.clip(rgb + value, 0, 255).astype(np.uint8)
+        arr[..., :3] = rgb
 
-        # Créer un nouveau QImage
         new_img = QImage(arr.data, width, height, QImage.Format.Format_RGBA8888)
         self.lbl.setPixmap(QPixmap.fromImage(new_img))
 # Main window
