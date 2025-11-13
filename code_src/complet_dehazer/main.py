@@ -5,6 +5,7 @@ from u_soft_matting import soft_matting, soft_matting_data                     #
 from u_guided_filter import guided_filter, guided_filter_data                  # kwargs | r : int, eps : float
 from image_diff import ImageComparator
 from PySide6.QtWidgets import *
+from config import OUTPUT_DIR
 import threading
 from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor, QDrag, QColor
 from PySide6.QtCore import Qt, QMimeData, QSize
@@ -39,7 +40,7 @@ class WidgetFileAttente(QWidget):
         self.setLayout(layout)
 
     def loadTransformedImages(self):
-        base_dir = os.path.join(os.getcwd(), "seriespicturesoutput")
+        base_dir = str(OUTPUT_DIR)
         paths_list = [os.path.join(base_dir, path) for path in os.listdir(base_dir)]
 
         for path_i in paths_list:
