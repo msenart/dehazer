@@ -16,9 +16,9 @@ class chunk_soft_matting_data:
             "maxiter": 5000,
             "n_cut_width": 1,
             "n_cut_height": 2,
-            "win_radius": 3,
-            "eps": 1e-7,
-            "lam": 1e-4,
+            "win_radius": 2,
+            "eps": 1e-5,
+            "lam": 1e-3,
             "max_processes": 6,
             "ratio": 0.5
         }
@@ -81,6 +81,7 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
             rows[start:end] = ii
             cols[start:end] = jj
             vals[start:end] = kk
+            local_loop_idx+=1
 
     logger.info("loading laplacian : 100% !")
     logger.info("Putting it all in order (1/3)")
