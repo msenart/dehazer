@@ -69,24 +69,17 @@ def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
 
     return A
 
-def estimate_transmission(I, dark, A, omega=0.95):
-    """Estimate transmission  t̃(x) = 1 - ω * min_c( min_{y∈Ω(x)} I^c(y)/A^c ).
-    I: HxWx3 float32 in [0,1]  (BGR if read by cv2)
-    A: (3,) float32 in [0,1]   (same channel order as I)
-    omega: keep-some-haze factor, typically 0.95
-    size: patch size (odd), e.g. 15 for ~600x400 images
-    """
-    # --- safety & broadcasting ---
+def estimate_transmission(I, dark, A, omega=0.95, size=15):
     I = I.astype(np.float32)
-    A = A.reshape(1, 1, 3)                       
+    A = A.reshape(1, 1, 3)
 
-    # --- channel-wise normalization I^c / A^c ---
-    norm = I / np.maximum(A, 1e-6)               
-    norm = np.minimum(norm, 1.0)                 
+    norm = I / np.maximum(A, 1e-6)
+    norm = np.clip(norm, 0, 1)
 
-    # --- final transmission:  t̃(x) = 1 - ω * dark_norm ---
-    t = 1.0 - omega * dark
-    t = np.clip(t, 0.0, 1.0)                      # keep in [0,1]
+    dark_norm = cv2.erode(np.min(norm, axis=2), np.ones((size,size)))
+
+    t = 1.0 - omega * dark_norm
+    t = np.clip(t, 0.0, 1.0)
     return t
 
 def recover_radiance(I, A, t, t0=0.1):
