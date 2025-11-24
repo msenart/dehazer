@@ -97,7 +97,7 @@ def recover_radiance(I, A, t, t0=0.1):
 
 def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any],
            dc_size, top_percent, patch_avg, omega, t0, show_steps = False,
-           out_dir="dehazed_results", custom_output_name=None):
+           out_dir = None, custom_output_name=None):
     """
     Full single-image dehazing pipeline (He et al. 2009) with soft matting refinement.
     Saves intermediate steps + composite comparison image.
@@ -140,70 +140,72 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
     # --- 6. recover scene radiance ---
     J = recover_radiance(I, A, t_refined, t0)
     
+    if out_dir :
+        # --- 7. create the big folder if doesn't exist ---
+        os.makedirs(out_dir, exist_ok=True)
 
-    # --- 7. create the big folder if doesn't exist ---
-    os.makedirs(out_dir, exist_ok=True)
+        # Save final dehazed result
+        initial_image = norm_color(I)
+        dark_channel_i = norm_gray(dark)
+        t_coarse_i = norm_gray(t_coarse)
+        t_refined_i = norm_gray(t_refined)
+        final_image = norm_color(J)
 
-    # Save final dehazed result
-    initial_image = norm_color(I)
-    dark_channel_i = norm_gray(dark)
-    t_coarse_i = norm_gray(t_coarse)
-    t_refined_i = norm_gray(t_refined)
-    final_image = norm_color(J)
+        # --- Écrire params.json dans le dossier de sortie ---
+        params_to_save = {
+            "dehaze_params": {
+                "smoothing algorithm" : smoothing_method.__name__,
+                "dc_size": dc_size,
+                "top_percent": top_percent,
+                "patch_avg": patch_avg,
+                "omega": omega,
+                "t0": t0
+            },
+            "algo_params": kwargs
+        }
 
-    # --- Écrire params.json dans le dossier de sortie ---
-    params_to_save = {
-        "dehaze_params": {
-            "smoothing algorithm" : smoothing_method.__name__,
-            "dc_size": dc_size,
-            "top_percent": top_percent,
-            "patch_avg": patch_avg,
-            "omega": omega,
-            "t0": t0
-        },
-        "algo_params": kwargs
-    }
+        base_name = os.path.splitext(os.path.basename(img_path))[0]
 
-    base_name = os.path.splitext(os.path.basename(img_path))[0]
+        i = 0
+        while True:
+            if i == 0:
+                total_path = os.path.join(out_dir, f"{base_name}_pipeline")
+            else:
+                total_path = os.path.join(out_dir, f"{base_name}_pipeline_{i}")
+            json_path = os.path.join(total_path, "params.json")
 
-    i = 0
-    while True:
-        if i == 0:
-            total_path = os.path.join(out_dir, f"{base_name}_pipeline")
-        else:
-            total_path = os.path.join(out_dir, f"{base_name}_pipeline_{i}")
-        json_path = os.path.join(total_path, "params.json")
+            if not os.path.exists(total_path):
+                break
+            else :
+                if not os.path.exists(json_path):
+                    break
 
-        if not os.path.exists(total_path):
-            break
-        else :
-            if not os.path.exists(json_path):
+            with open(json_path, "r") as f:
+                older_params = json.load(f)
+
+            if older_params != params_to_save:
+                i += 1
+                continue
+            else:
                 break
 
-        with open(json_path, "r") as f:
-            older_params = json.load(f)
+        logger.info(f"💾 Paramètres sauvegardés dans {json_path}")
 
-        if older_params != params_to_save:
-            i += 1
-            continue
-        else:
-            break
+        logger.info(f"Dehazed image saved to {base_name}_dehazed.png")
+        
+        os.makedirs(total_path,exist_ok=True)
+        cv2.imwrite(os.path.join(total_path,f"{base_name}_initial.png"),initial_image)
+        cv2.imwrite(os.path.join(total_path,f"{base_name}_dc.png"),dark_channel_i)
+        cv2.imwrite(os.path.join(total_path,f"{base_name}_tcoarse.png"),t_coarse_i)
+        cv2.imwrite(os.path.join(total_path,f"{base_name}_trefined.png"),t_refined_i)
+        cv2.imwrite(os.path.join(total_path,f"{base_name}_final.png"),final_image)
+        
+        with open(json_path, "w") as f:
+            json.dump(params_to_save, f, indent=4)
 
-    logger.info(f"💾 Paramètres sauvegardés dans {json_path}")
-
-    logger.info(f"Dehazed image saved to {base_name}_dehazed.png")
-    
-    os.makedirs(total_path,exist_ok=True)
-    cv2.imwrite(os.path.join(total_path,f"{base_name}_initial.png"),initial_image)
-    cv2.imwrite(os.path.join(total_path,f"{base_name}_dc.png"),dark_channel_i)
-    cv2.imwrite(os.path.join(total_path,f"{base_name}_tcoarse.png"),t_coarse_i)
-    cv2.imwrite(os.path.join(total_path,f"{base_name}_trefined.png"),t_refined_i)
-    cv2.imwrite(os.path.join(total_path,f"{base_name}_final.png"),final_image)
-    
-    with open(json_path, "w") as f:
-        json.dump(params_to_save, f, indent=4)
-
-    return total_path
+        return total_path
+    else :
+        return J
 
 
 
