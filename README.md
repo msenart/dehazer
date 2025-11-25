@@ -27,5 +27,4 @@ Nos principales images de test se trouvent dans :
 
 **images/hazed_images/very_hazed_images**
 
-
 Vous pouvez les utiliser pour tester le fonctionnement du projet !
