@@ -26,39 +26,23 @@ class dehazer_data:
     }
 
 def dark_channel(im, size=15):
-    """Compute the dark channel of an image.
-    im: [H,W,3], uint8 or float in [0,1]
-    size: patch size
-    """
     min_per_channel = np.min(im, axis=2)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
     dark = cv2.erode(min_per_channel, kernel)
     return dark
 
 def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
-    """Estimate atmospheric light A
-    im   : HxWx3 float32 in [0,1] (BGR if read by cv2)
-    dark : HxW   float32 in [0,1] dark channel
-    top_percent : fraction of pixels (e.g., 0.001 = top 0.1%) from dark channel
-    patch_avg   : optional odd kernel size to average around the chosen pixel (denoise)
-    Returns:
-        A : (3,) atmospheric light vector in [0,1]
-    """
     H, W = dark.shape
     N = H * W
     k = max(1, int(N * top_percent))
 
-    # pick top-k brightest in dark channel (most haze-opaque)
     dark_flat = dark.reshape(-1)
-    idxs = np.argpartition(dark_flat, -k)[-k:]      # top-k indices, O(N)
-    # among these, choose the pixel with the highest intensity in the input image
+    idxs = np.argpartition(dark_flat, -k)[-k:]
     im_flat = im.reshape(-1, 3)
-    # brightness proxy: channel sum (robust to BGR/RGB ordering)
     brightness = im_flat[idxs].sum(axis=1)
     best = idxs[np.argmax(brightness)]
     y, x = divmod(int(best), W)
 
-    # 3) optionally average a small patch around (y,x) to reduce noise
     if patch_avg and patch_avg > 1:
         r = patch_avg // 2
         y0, y1 = max(0, y - r), min(H, y + r + 1)
@@ -83,12 +67,6 @@ def estimate_transmission(I, dark, A, omega=0.95, size=15):
     return t
 
 def recover_radiance(I, A, t, t0=0.1):
-    """Recover haze-free radiance J from hazy image I
-    I: HxWx3 float32 in [0,1]
-    A: (3,) float32 in [0,1]   (same channel order as I)
-    t: HxW   float32 in [0,1]  (refined transmission)
-    t0: lower bound to avoid noise amplification (typ. 0.1)
-    """
     I = I.astype(np.float32)
     A = A.reshape(1, 1, 3).astype(np.float32)  
     t = np.clip(t, t0, 1.0)                    
@@ -98,35 +76,23 @@ def recover_radiance(I, A, t, t0=0.1):
 def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any],
            dc_size, top_percent, patch_avg, omega, t0, show_steps = False,
            out_dir = None, custom_output_name=None):
-    """
-    Full single-image dehazing pipeline (He et al. 2009) with soft matting refinement.
-    Saves intermediate steps + composite comparison image.
-    """
 
     def norm_gray(x):
-        """Normalize to 8-bit grayscale"""
         x = np.clip(x, 0, 1)
         x = (x * 255).astype(np.uint8)
         return cv2.cvtColor(x, cv2.COLOR_GRAY2BGR)
 
     def norm_color(x):
-        """Normalize a color image (already BGR)"""
         return (np.clip(x, 0, 1) * 255).astype(np.uint8)
 
-    # --- 1. read image ---
     I = cv2.imread(img_path).astype('float32') / 255.0
 
-    # --- 2. dark channel ---
     dark = dark_channel(I, dc_size)
     
-
-    # --- 3. atmospheric light ---
     A = estimate_atmospheric_light(I, dark, top_percent, patch_avg)
 
-    # --- 4. coarse transmission ---
     t_coarse = estimate_transmission(I, dark, A, omega)
     
-    # --- 5. refine transmission with soft matting ---
     try:
         t_refined = smoothing_method(I,t_coarse,**kwargs)
         t_refined = np.clip(t_refined, 0.0, 1.0)
@@ -136,22 +102,17 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         traceback.print_exc()
         t_refined = t_coarse
         
-
-    # --- 6. recover scene radiance ---
     J = recover_radiance(I, A, t_refined, t0)
     
     if out_dir :
-        # --- 7. create the big folder if doesn't exist ---
         os.makedirs(out_dir, exist_ok=True)
 
-        # Save final dehazed result
         initial_image = norm_color(I)
         dark_channel_i = norm_gray(dark)
         t_coarse_i = norm_gray(t_coarse)
         t_refined_i = norm_gray(t_refined)
         final_image = norm_color(J)
 
-        # --- Écrire params.json dans le dossier de sortie ---
         params_to_save = {
             "dehaze_params": {
                 "smoothing algorithm" : smoothing_method.__name__,

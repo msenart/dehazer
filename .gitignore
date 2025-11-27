@@ -1,6 +1,7 @@
 hazed_images/*
 seriespicturesoutput/*
-
+results_psnr_ssim.csv
+global_metrics.csv
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

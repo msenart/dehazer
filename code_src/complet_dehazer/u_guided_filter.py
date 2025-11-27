@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Single Image Dehazing using Dark Channel Prior
-----------------------------------------------
-Implementation of He et al., 2009 (CVPR).
-Comments are in English.
-"""
 import cv2
 import numpy as np
 import logging
@@ -45,7 +37,7 @@ def guided_filter(I, p, r=20, eps=1e-3):
         q = mean_a*I + mean_b
         return q
 
-    else:  # RGB guidance
+    else:
         I_b, I_g, I_r = I[:,:,0], I[:,:,1], I[:,:,2]
 
         mean_b = box(I_b)

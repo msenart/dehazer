@@ -24,23 +24,12 @@ class chunk_soft_matting_data:
         }
 
 def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, maxiter = 5000):
-    """
-    Closed-form matting refinement of transmission (soft matting).
-    I_rgb    : HxWx3 float32 in [0,1]  (guide: original color image)
-    t_coarse : HxW    float32 in [0,1]  (initial transmission)
-    win_radius : window radius r (window size = (2r+1)^2), typically 1 or 2
-    eps      : regularization in covariance inversion (very small)
-    lam      : data term weight (lambda in the paper; small ~1e-4)
-    Returns:
-        t_refined : HxW float32
-    """
     H, W, _ = I_rgb.shape
     N = H * W
     win_size = (2 * win_radius + 1)
-    K = win_size * win_size  # number of pixels per window
+    K = win_size * win_size
     results_size = (H - 2*win_radius) * (W - 2*win_radius) * K * K
 
-    # flatten helpers
     inds = np.arange(N).reshape(H, W)
 
     rows = np.zeros(results_size)
@@ -57,21 +46,16 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
             cov = (win_I - mu).T @ (win_I - mu) / K          
             cov_reg = cov + (eps / K) * np.eye(3)            
 
-            # inverse covariance
             inv = np.linalg.inv(cov_reg)
 
-            # (I - 1/K) operator
             X = win_I - mu                                   
             M = np.eye(K) - np.ones((K, K)) / K              
 
-            # L_w = M - X * inv * X^T / K
-            # compute X * inv * X^T efficiently
             Xin = X @ inv                                    
             Q = (Xin @ X.T) / K                              
             Lw = M + Q * 0.0                                 
             Lw -= Q                                         
 
-            # scatter-add to global Laplacian
             ii = np.repeat(win_inds, K)
             jj = np.tile(win_inds, K)
             kk = Lw.reshape(-1)
@@ -101,7 +85,6 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
         logger.warning(f"⚠️ CG did not fully converge, info = {info}")
     t_refined = t_refined.reshape(H, W).astype(np.float32)
 
-    # Clamp to [0,1]
     logger.info("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
 
@@ -149,17 +132,6 @@ def chunked_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : in
     loading_total = len(transmission_patches)
     loading_counter = 0
     t_refined_full = np.zeros((height, width), dtype=np.float32)
-
-    # for t_patch,i_patch,coord in zip(transmission_patches,I_rgb_patches,coords):
-    #     logger.info(f"============= patch {t_patch.shape} started ! : {loading_counter}/{loading_total} =============")
-    #     i_min, i_max, j_min, j_max = coord
-    #     refined_patch = soft_matting(i_patch,t_patch, maxiter, win_radius, eps, lam, max_processes)
-    #     refined_patch = refined_patch.reshape(i_max - i_min, j_max - j_min)
-    #     t_refined_full[i_min:i_max,j_min:j_max] = refined_patch
-    #     loading_total+=1
-    #     logger.info(f"============= patch {t_patch.shape} finished ! : {loading_counter}/{loading_total} =============")
-    
-    # return np.clip(t_refined_full,0.0,1.0)
 
     manager = Manager()
     started_counter = manager.Value('i', 0)

@@ -178,7 +178,6 @@ if __name__ == "__main__":
     df_global.to_csv("global_metrics.csv", index=False)
     print("\n📁 Métriques globales : global_metrics.csv")
 
-    # --- graphiques
     print("\n📊 Génération des graphiques...")
     plot_metric(df_results, "psnr")
     plot_metric(df_results, "ssim")

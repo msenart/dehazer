@@ -45,21 +45,16 @@ def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min
             cov = (win_I - mu).T @ (win_I - mu) / K          
             cov_reg = cov + (eps / K) * np.eye(3)            
 
-            # inverse covariance
             inv = np.linalg.inv(cov_reg)
 
-            # (I - 1/K) operator
             X = win_I - mu                                   
             M = np.eye(K) - np.ones((K, K)) / K              
 
-            # L_w = M - X * inv * X^T / K
-            # compute X * inv * X^T efficiently
             Xin = X @ inv                                    
             Q = (Xin @ X.T) / K                              
             Lw = M + Q * 0.0                                 
             Lw -= Q                                         
 
-            # scatter-add to global Laplacian
             ii = np.repeat(win_inds, K)
             jj = np.tile(win_inds, K)
             kk = Lw.reshape(-1)
@@ -76,26 +71,13 @@ def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min
 ### MAIN FUNCTION BELOW ========================================================================================================
 
 def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
-    """
-    Closed-form matting refinement of transmission (soft matting).
-    I_rgb    : HxWx3 float32 in [0,1]  (guide: original color image)
-    t_coarse : HxW    float32 in [0,1]  (initial transmission)
-    win_radius : window radius r (window size = (2r+1)^2), typically 1 or 2
-    eps      : regularization in covariance inversion (very small)
-    lam      : data term weight (lambda in the paper; small ~1e-4)
-    Returns:
-        t_refined : HxW float32
-    """
 
     H, W, _ = I_rgb.shape
     N = H * W
     win_size = (2 * win_radius + 1)
-    K = win_size * win_size  # number of pixels per window
+    K = win_size * win_size
 
-    # flatten helpers
     inds = np.arange(N).reshape(H, W)
-
-    # allocate shared variables before multiprocessing
 
     process_idx = 0
     args_list = []
@@ -123,23 +105,20 @@ def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max
 
     logger.info("loading laplacian : 100% !")
     logger.info("Putting it all in order (1/3)")
-    # (slow !)
+
     L = csr_matrix((vals, (rows, cols)), shape=(N, N))
     logger.info("Putting it all in order (2/3)")
-    # Data term: lambda * (t - t0)^2
     A = L + lam * eye(N, format='csr')
     logger.info("Putting it all in order (3/3)")
     b = lam * t_coarse.reshape(-1)
 
     logger.info("loading laplacian : 100% ! Inverting matrix...")
 
-    # Solve sparse linear system (slow !)
     t_refined, info = cg(A, b, rtol=1e-6, maxiter = maxiter)
     if info != 0:
         logger.warning(f"⚠️ CG did not fully converge, info = {info}")
     t_refined = t_refined.reshape(H, W).astype(np.float32)
 
-    # Clamp to [0,1]
     logger.info("soft matting completed ! (3/3)")
     return np.clip(t_refined, 0.0, 1.0)
 
