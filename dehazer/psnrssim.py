@@ -1,3 +1,10 @@
+"""Sweep the dark-channel-size parameter over the I-HAZE dataset and plot PSNR/SSIM.
+
+Standalone evaluation script (parameters are module-level constants below rather
+than a CLI). Run via ``python -m dehazer.psnrssim`` after downloading the I-HAZE
+dataset into ``hazed_images/I-HAZE`` at the project root (see the README).
+"""
+
 import os
 import cv2
 import numpy as np
@@ -6,14 +13,14 @@ from skimage.metrics import peak_signal_noise_ratio as psnr, structural_similari
 from multiprocessing import Pool, cpu_count
 import pandas as pd
 from tqdm import tqdm
-import dehazer as dh
-import u_guided_filter as gf
-from config import PROJECT_ROOT
 
-# ----------------------------------------------------------------------
-# 1) PLUG YOUR DEHAZING ALGORITHM IN HERE
-# ----------------------------------------------------------------------
+from . import core as dh
+from . import u_guided_filter as gf
+from .config import PROJECT_ROOT
+
+# --- 1) Dehazing algorithm under evaluation ---
 def dehaze_algorithm(image, param):
+    """Run the core dehaze pipeline with a guided filter, sweeping dc_size=param."""
     kwargs = {
         "r":200, "eps":1e-3
     }
@@ -21,29 +28,24 @@ def dehaze_algorithm(image, param):
     return image
 
 
-# ----------------------------------------------------------------------
-# 2) PARAMETERS
-# ----------------------------------------------------------------------
+# --- 2) Parameters ---
 path_hazy = str(PROJECT_ROOT / "hazed_images" / "I-HAZE" / "train" / "hazy")
 path_gt   = str(PROJECT_ROOT / "hazed_images" / "I-HAZE" / "train" / "clear")
 
 parameter_values = [1 + 4*i for i in range(10)]
 
 def to_uint8_image(arr):
-    # If the float image is in [0,1]
+    """Convert a float image (assumed in [0,1] or already [0,255]) to a clamped uint8 array."""
     if arr.max() <= 1.0:
         arr = arr * 255.0
 
-    # Clamp to avoid out-of-range values
     arr = np.clip(arr, 0, 255)
 
-    # Convert to uint8
     return arr.astype(np.uint8)
 
-# ----------------------------------------------------------------------
-# 3) METRICS COMPUTATION FOR ONE IMAGE
-# ----------------------------------------------------------------------
+# --- 3) Metrics computation for one image ---
 def compute_for_one_image(args):
+    """Dehaze one hazy image with dehaze_algorithm and compute PSNR/SSIM against its ground truth."""
     hazy_filename, param, hazy_path, gt_path = args
 
     # The matching GT file: strip "_hazy"
@@ -66,7 +68,6 @@ def compute_for_one_image(args):
     hazy_img = cv2.cvtColor(hazy_img, cv2.COLOR_BGR2RGB)
     gt_img   = cv2.cvtColor(gt_img, cv2.COLOR_BGR2RGB)
 
-    # your algorithm
     dehazed = dehaze_algorithm(hazy_img_path, param)
     dehazed = to_uint8_image(dehazed)
 
@@ -81,11 +82,9 @@ def compute_for_one_image(args):
     }
 
 
-
-# ----------------------------------------------------------------------
-# 4) GLOBAL COMPUTATION (correct global PSNR and SSIM)
-# ----------------------------------------------------------------------
+# --- 4) Global metrics (dataset-wide PSNR and SSIM) ---
 def compute_global_metrics(df):
+    """Aggregate per-image PSNR/SSIM rows in df into dataset-wide PSNR and SSIM values."""
     global_ssim = df["ssim"].mean()
 
     mse_list = []
@@ -100,10 +99,9 @@ def compute_global_metrics(df):
     return psnr_global, global_ssim
 
 
-# ----------------------------------------------------------------------
-# 5) MULTIPROCESSING EVALUATION
-# ----------------------------------------------------------------------
+# --- 5) Multiprocessing evaluation ---
 def evaluate_with_multiprocessing(hazy_dir, gt_dir, params):
+    """Evaluate every (image, parameter) combination in parallel and return a results DataFrame."""
 
     hazy_files = sorted([f for f in os.listdir(hazy_dir) if f.lower().endswith((".jpg", ".png", ".jpeg"))])
     gt_files   = sorted([f for f in os.listdir(gt_dir) if f.lower().endswith((".jpg", ".png", ".jpeg"))])
@@ -122,10 +120,9 @@ def evaluate_with_multiprocessing(hazy_dir, gt_dir, params):
     df = pd.DataFrame(results)
     return df
 
-# ----------------------------------------------------------------------
-# 8) PLOTS
-# ----------------------------------------------------------------------
+# --- 6) Plots ---
 def plot_metric(df, metric_name):
+    """Plot metric_name vs. parameter, one line per image."""
     plt.figure(figsize=(10, 6))
     for image in df["image"].unique():
         sub = df[df["image"] == image]
@@ -140,6 +137,7 @@ def plot_metric(df, metric_name):
     plt.show()
 
 def plot_global(df):
+    """Plot the dataset-wide PSNR and SSIM curves vs. parameter."""
     plt.figure(figsize=(10, 6))
     plt.plot(df["param"], df["psnr_global"], marker="o")
     plt.xlabel("Parameter")
@@ -164,7 +162,7 @@ if __name__ == "__main__":
     df_results.to_csv("results_psnr_ssim.csv", index=False)
     print("\n📁 CSV file generated: results_psnr_ssim.csv")
 
-    # --- global metrics
+    # --- Global metrics ---
     global_stats = []
     for param in parameter_values:
         subdf = df_results[df_results["param"] == param]

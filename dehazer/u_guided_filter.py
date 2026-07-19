@@ -1,3 +1,5 @@
+"""Guided filter transmission-map refinement (grayscale and color-guide variants)."""
+
 import cv2
 import numpy as np
 import logging
@@ -5,6 +7,8 @@ import logging
 logger = logging.getLogger("widget_logger")
 
 class guided_filter_data:
+    """Parameter schema and defaults for guided_filter(), shared with the GUI's parameter form."""
+
     ALGO_PARAMS = {
             "r": "int", "eps": "float"
         }
@@ -13,9 +17,14 @@ class guided_filter_data:
             "eps": 0.01
         }
 
-### MAIN FUNCTION BELOW ========================================================================================================
+# --- Main function ---
 
 def guided_filter(I, p, r=20, eps=1e-3):
+    """Refine transmission map p using guidance image I (He et al.'s guided filter).
+
+    Supports both a single-channel (grayscale) and a 3-channel (color) guidance
+    image I; the color case solves the per-pixel 3x3 linear coefficients directly.
+    """
     I = I.astype(np.float32)
     p = p.astype(np.float32)
     H, W = p.shape[:2]

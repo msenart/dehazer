@@ -4,7 +4,6 @@
 Single Image Dehazing using Dark Channel Prior
 ----------------------------------------------
 Implementation of He et al., 2009 (CVPR).
-Comments are in English.
 """
 import os
 import cv2
@@ -17,6 +16,8 @@ import json
 logger = logging.getLogger("widget_logger")
 
 class dehazer_data:
+    """Default parameters for the dehaze() pipeline, shared with the GUI's parameter form."""
+
     DEFAULT_DEHAZE_PARAMS = {
     "dc_size": 15,
     "top_percent": 0.001,
@@ -26,12 +27,14 @@ class dehazer_data:
     }
 
 def dark_channel(im, size=15):
+    """Compute the dark channel of im: the per-pixel minimum over color channels, eroded over a size x size window."""
     min_per_channel = np.min(im, axis=2)
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
     dark = cv2.erode(min_per_channel, kernel)
     return dark
 
 def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
+    """Estimate the atmospheric light A as the brightest pixel among the top_percent darkest-channel pixels."""
     H, W = dark.shape
     N = H * W
     k = max(1, int(N * top_percent))
@@ -54,6 +57,7 @@ def estimate_atmospheric_light(im, dark, top_percent=0.001, patch_avg=3):
     return A
 
 def estimate_transmission(I, dark, A, omega=0.95, size=15):
+    """Estimate the coarse transmission map t = 1 - omega * dark_channel(I / A)."""
     I = I.astype(np.float32)
     A = A.reshape(1, 1, 3)
 
@@ -67,15 +71,24 @@ def estimate_transmission(I, dark, A, omega=0.95, size=15):
     return t
 
 def recover_radiance(I, A, t, t0=0.1):
+    """Recover the haze-free radiance J = (I - A) / max(t, t0) + A."""
     I = I.astype(np.float32)
-    A = A.reshape(1, 1, 3).astype(np.float32)  
-    t = np.clip(t, t0, 1.0)                    
-    J = (I - A) / t[..., None] + A             
-    return np.clip(J, 0.0, 1.0)         
+    A = A.reshape(1, 1, 3).astype(np.float32)
+    t = np.clip(t, t0, 1.0)
+    J = (I - A) / t[..., None] + A
+    return np.clip(J, 0.0, 1.0)
 
 def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any],
            dc_size, top_percent, patch_avg, omega, t0, show_steps = False,
            out_dir = None, custom_output_name=None):
+    """Run the full dehazing pipeline on img_path.
+
+    Steps: dark channel -> atmospheric light -> coarse transmission -> transmission
+    refinement (via smoothing_method, e.g. a guided filter or soft matting) -> radiance
+    recovery. When out_dir is given, every intermediate step is saved as a PNG alongside
+    a params.json describing the parameters used, and the pipeline folder path is
+    returned; otherwise the recovered radiance array is returned directly.
+    """
 
     def norm_gray(x):
         x = np.clip(x, 0, 1)
@@ -88,11 +101,11 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
     I = cv2.imread(img_path).astype('float32') / 255.0
 
     dark = dark_channel(I, dc_size)
-    
+
     A = estimate_atmospheric_light(I, dark, top_percent, patch_avg)
 
     t_coarse = estimate_transmission(I, dark, A, omega)
-    
+
     try:
         t_refined = smoothing_method(I,t_coarse,**kwargs)
         t_refined = np.clip(t_refined, 0.0, 1.0)
@@ -101,9 +114,9 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         logger.info(f"Soft matting failed ({e}), using coarse transmission.")
         traceback.print_exc()
         t_refined = t_coarse
-        
+
     J = recover_radiance(I, A, t_refined, t0)
-    
+
     if out_dir :
         os.makedirs(out_dir, exist_ok=True)
 
@@ -127,6 +140,9 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
 
         base_name = os.path.splitext(os.path.basename(img_path))[0]
 
+        # Find (or create) the pipeline subfolder matching these exact parameters,
+        # numbering a new one if a folder with the same base name but different
+        # parameters already exists.
         i = 0
         while True:
             if i == 0:
@@ -153,21 +169,17 @@ def dehaze(img_path, smoothing_method : Callable[...,Any], kwargs : dict[str,Any
         logger.info(f"💾 Parameters saved to {json_path}")
 
         logger.info(f"Dehazed image saved to {base_name}_dehazed.png")
-        
+
         os.makedirs(total_path,exist_ok=True)
         cv2.imwrite(os.path.join(total_path,f"{base_name}_initial.png"),initial_image)
         cv2.imwrite(os.path.join(total_path,f"{base_name}_dc.png"),dark_channel_i)
         cv2.imwrite(os.path.join(total_path,f"{base_name}_tcoarse.png"),t_coarse_i)
         cv2.imwrite(os.path.join(total_path,f"{base_name}_trefined.png"),t_refined_i)
         cv2.imwrite(os.path.join(total_path,f"{base_name}_final.png"),final_image)
-        
+
         with open(json_path, "w") as f:
             json.dump(params_to_save, f, indent=4)
 
         return total_path
     else :
         return J
-
-
-
-

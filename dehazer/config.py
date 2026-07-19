@@ -1,9 +1,11 @@
+"""Shared project paths used across the dehazer package."""
+
 from pathlib import Path
 
-# root library path
+# Repository root (two levels up: dehazer/config.py -> dehazer/ -> repo root)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# output directory for dehazed images
+# Output directory for dehazed images
 OUTPUT_DIR = PROJECT_ROOT / "seriespicturesoutput"
 
 

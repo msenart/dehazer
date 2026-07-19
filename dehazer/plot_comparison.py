@@ -1,3 +1,5 @@
+"""Plot PSNR/SSIM/UIQM vs. parameter value from comparison.json files produced by comparison.py."""
+
 import os
 import json
 import argparse
@@ -5,12 +7,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def try_float(s):
+    """Parse s as a float, returning None instead of raising if it isn't numeric."""
     try:
         return float(s)
     except Exception:
         return None
 
 def plot_metric(results, param_name, metric_key, out_path):
+    """Plot metric_key vs. parameter value from results and save the figure to out_path."""
     items = []
     for r in results:
         v = r.get('value')
@@ -36,6 +40,7 @@ def plot_metric(results, param_name, metric_key, out_path):
     print(f"Saved plot: {out_path}")
 
 def main(results_root, out_dir, json_name='comparison.json'):
+    """Generate PSNR/SSIM/UIQM plots for every parameter subfolder found under results_root."""
     if not os.path.isdir(results_root):
         raise FileNotFoundError(f"results_root not found: {results_root}")
     os.makedirs(out_dir, exist_ok=True)
@@ -60,7 +65,7 @@ def main(results_root, out_dir, json_name='comparison.json'):
         plot_metric(results, param_name, 'UIQM', os.path.join(out_dir, f"{param_name}_UIQM.png"))
 
 if __name__ == "__main__":
-    from config import PROJECT_ROOT
+    from .config import PROJECT_ROOT
 
     default_results_root = str(PROJECT_ROOT / "seriespicturesoutput")
     default_out_dir = str(PROJECT_ROOT / "seriespicturesoutput" / "plots")

@@ -1,3 +1,5 @@
+"""Closed-form soft matting transmission-map refinement (Levin et al., parallelized over rows)."""
+
 import numpy as np
 from scipy.sparse import csr_matrix, eye
 from scipy.sparse.linalg import cg
@@ -7,6 +9,8 @@ import logging
 logger = logging.getLogger("widget_logger")
 
 class soft_matting_data:
+    """Parameter schema and defaults for soft_matting(), shared with the GUI's parameter form."""
+
     ALGO_PARAMS = {
             "maxiter": "int", "win_radius": "int", "eps": "float",
             "lam": "float", "max_processes": "int"
@@ -20,9 +24,11 @@ class soft_matting_data:
         }
 
 def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min,y_max,eps,K):
-    '''
-    The image is split into many strands, which are calculated separately to increase the speed. This is one process of them.
-    '''
+    """Build the matting Laplacian entries for rows [y_min, y_max) of I_rgb.
+
+    The image is split into row strands processed in parallel (one call per
+    process) to speed up construction of the (sparse) matting Laplacian.
+    """
     results_size = (y_max - y_min) * (W - 2 * win_radius) * K * K
 
     rows = np.zeros(results_size)
@@ -68,9 +74,13 @@ def _one_line_soft_matting(I_rgb,inds,win_radius,W,process_idx,n_processes,y_min
     print(f"============= process finished ! {process_idx}/{n_processes} ==============",flush=True)
     return [rows,cols,vals]
 
-### MAIN FUNCTION BELOW ========================================================================================================
+# --- Main function ---
 
 def soft_matting(I_rgb, t_coarse, maxiter, win_radius=1, eps=1e-7, lam=1e-4, max_processes = 4):
+    """Refine t_coarse via closed-form soft matting: build the matting Laplacian
+    (in parallel across max_processes) and solve (L + lam*I) t = lam*t_coarse with
+    conjugate gradient.
+    """
 
     H, W, _ = I_rgb.shape
     N = H * W

@@ -1,3 +1,5 @@
+"""Chunked/patch-based soft matting: splits large images into tiles processed in parallel."""
+
 import numpy as np
 from scipy.sparse import csr_matrix, eye
 from scipy.sparse.linalg import cg
@@ -7,6 +9,8 @@ import logging
 logger = logging.getLogger("widget_logger")
 
 class chunk_soft_matting_data:
+    """Parameter schema and defaults for chunked_soft_matting(), shared with the GUI's parameter form."""
+
     ALGO_PARAMS = {
             "maxiter": "int", "n_cut_width": "int", "n_cut_height": "int",
             "win_radius": "int", "eps": "float", "lam": "float",
@@ -24,6 +28,7 @@ class chunk_soft_matting_data:
         }
 
 def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, maxiter = 5000):
+    """Run closed-form soft matting on a single image chunk (see soft_matting() in u_soft_matting.py)."""
     H, W, _ = I_rgb.shape
     N = H * W
     win_size = (2 * win_radius + 1)
@@ -89,6 +94,7 @@ def _chunk_soft_matting(I_rgb, t_coarse, win_radius=1, eps=1e-7, lam = 1e-4, max
     return np.clip(t_refined, 0.0, 1.0)
 
 def _patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radius,eps,lam,started_counter,loading_counter,loading_total,maxiter):
+    """Worker entry point: refine one image patch and return it with its (i_min, i_max, j_min, j_max) placement."""
     started_counter.value+=1
     logger.info(f"============= patch {t_patch.shape} started ! : {started_counter.value}/{loading_total} =============")
     refined_patch = _chunk_soft_matting(I_patch,t_patch, win_radius, eps, lam, maxiter)
@@ -97,9 +103,10 @@ def _patch_soft_matting_process(I_patch,t_patch,i_min,i_max,j_min,j_max,win_radi
     logger.info(f"============= patch {t_patch.shape} finished ! : {loading_counter.value}/{loading_total} =============")
     return refined_patch,i_min,i_max,j_min,j_max
 
-### MAIN FUNCTION BELOW ========================================================================================================
+# --- Main function ---
 
 def chunked_soft_matting(I_rgb : np.ndarray,t_coarse : np.ndarray , maxiter : int, n_cut_width : int ,n_cut_height : int, win_radius : int, eps : float ,lam : float, max_processes, ratio : float = 0.5) -> list[np.ndarray]:
+    """Refine t_coarse via soft matting applied independently to an n_cut_height x n_cut_width grid of tiles, processed in parallel across max_processes and reassembled into a single transmission map."""
     height,width = t_coarse.shape
     height_cut = height//n_cut_height
     width_cut = width//n_cut_width

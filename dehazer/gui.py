@@ -1,33 +1,43 @@
-from dehazer import dehaze, dehazer_data
-from time import perf_counter
-from u_soft_matting_chunked import chunked_soft_matting, chunk_soft_matting_data    # kwargs | maxiter : int, n_cut_width : int, n_cut_height : int, win_radius : int, eps : float, lam : float, max_processes : int, ratio : float
-from u_soft_matting import soft_matting, soft_matting_data                     # kwargs | maxiter : int, win_radius : int, eps : int, lam : int, max_processes : int
-from u_guided_filter import guided_filter, guided_filter_data                  # kwargs | r : int, eps : float
-from image_diff import ImageComparator
-from PySide6.QtWidgets import *
-from config import OUTPUT_DIR, ensure_output_dir
-import threading
-from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor, QDrag, QColor
-from PySide6.QtCore import Qt, QMimeData, QSize
-import numpy as np
-import os
+"""Desktop GUI for Dehazer, built with PySide6.
+
+Provides a drag-and-drop interface to run the dehazing pipeline, a processing
+queue, and two comparison views (image-to-image and pipeline-to-pipeline).
+Launched via ``python -m dehazer``.
+"""
+
 import json
 import logging
-import sys
+import os
+import threading
+
+import numpy as np
+from PySide6.QtCore import Qt, QMimeData, QSize
+from PySide6.QtGui import QPixmap, QIcon, QImage, QTextCursor, QDrag, QColor
+from PySide6.QtWidgets import *
+
+from .config import OUTPUT_DIR, ensure_output_dir
+from .core import dehaze, dehazer_data
+from .image_diff import ImageComparator
+from .u_guided_filter import guided_filter, guided_filter_data                  # kwargs | r : int, eps : float
+from .u_soft_matting import soft_matting, soft_matting_data                     # kwargs | maxiter : int, win_radius : int, eps : int, lam : int, max_processes : int
+from .u_soft_matting_chunked import chunked_soft_matting, chunk_soft_matting_data    # kwargs | maxiter : int, n_cut_width : int, n_cut_height : int, win_radius : int, eps : float, lam : float, max_processes : int, ratio : float
+
 
 class QueueWidget(QWidget):
+    """Two-pane list showing pending and completed dehazing tasks."""
+
     def __init__(self):
         super().__init__()
         layout = QHBoxLayout(self)
 
-        # Left list: pending
+        # --- Left list: pending ---
         self.pending_list = QListWidget()
         self.pending_list.setIconSize(QSize(80, 80))
         self.pending_list.setAlternatingRowColors(True)
         self.pending_list.setSpacing(6)
         layout.addWidget(self.pending_list)
 
-        # Right list: completed
+        # --- Right list: completed ---
         self.completed_list = QListWidget()
         self.completed_list.itemActivated.connect(self.view_images)
         self.completed_list.setIconSize(QSize(80, 80))
@@ -40,6 +50,7 @@ class QueueWidget(QWidget):
         self.setLayout(layout)
 
     def loadTransformedImages(self):
+        """Populate the completed list from pipeline folders already in OUTPUT_DIR."""
         base_dir = str(OUTPUT_DIR)
         paths_list = [os.path.join(base_dir, path) for path in os.listdir(base_dir)]
 
@@ -65,10 +76,9 @@ class QueueWidget(QWidget):
 
                     self.completed_list.addItem(item)
 
-    # ----------------------------------------------------
-    # Add a task to the queue
-    # ----------------------------------------------------
+    # --- Add a task to the queue ---
     def add_task(self, img_path: str, algo_name: str):
+        """Add a new pending-list entry for img_path and return the created item."""
         text = f"{img_path.split('/')[-1]} — {algo_name}"
 
         # Create the item with an icon on the right
@@ -85,10 +95,9 @@ class QueueWidget(QWidget):
         self.pending_list.addItem(item)
         return item
 
-    # ----------------------------------------------------
-    # Move the completed item to the right-hand list
-    # ----------------------------------------------------
+    # --- Move the completed item to the right-hand list ---
     def mark_as_done(self, item: QListWidgetItem, folder_path):
+        """Move item from the pending list to the completed list."""
         if item is None:
             return
         text = item.text() + " ✅"
@@ -99,11 +108,15 @@ class QueueWidget(QWidget):
         row = self.pending_list.row(item)
         self.pending_list.takeItem(row)
 
-    def view_images(self, item : QListWidgetItem):
+    def view_images(self, item: QListWidgetItem):
+        """Open an ImageViewer window for the pipeline folder behind item."""
         ImageViewer(item.folder_path)
 
+
 class ImageViewer(QMainWindow):
-    image_pipeline = ["initial","dc","tcoarse","trefined","final"]
+    """Window that steps through the saved stages of one dehazing pipeline run."""
+
+    image_pipeline = ["initial", "dc", "tcoarse", "trefined", "final"]
 
     def __init__(self, dir_path: str):
         super().__init__()
@@ -116,18 +129,18 @@ class ImageViewer(QMainWindow):
         self.dehaze_params = data.get("dehaze_params", {})
         self.algo_params = data.get("algo_params", {})
 
-        # Central widget
+        # --- Central widget ---
         self.widget = QWidget(self)
         self.setCentralWidget(self.widget)
         self.widget.setMinimumSize(800, 600)
         self.layout_main = QVBoxLayout(self.widget)
 
-        # Title at the top
+        # --- Title at the top ---
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignCenter)
         self.layout_main.addWidget(self.title)
 
-        # Viewer with vertical buttons
+        # --- Viewer with vertical buttons ---
         self.visualiser = QWidget()
         self.layout_main.addWidget(self.visualiser)
         self.layout_visual = QHBoxLayout(self.visualiser)
@@ -151,7 +164,7 @@ class ImageViewer(QMainWindow):
         self.left.clicked.connect(lambda: self.change_picture(self.left.text()))
         self.right.clicked.connect(lambda: self.change_picture(self.right.text()))
 
-        # Parameters section, side by side
+        # --- Parameters section, side by side ---
         self.params_widget = QWidget()
         self.params_layout = QHBoxLayout(self.params_widget)
         self.layout_main.addWidget(self.params_widget)
@@ -194,10 +207,12 @@ class ImageViewer(QMainWindow):
         self.update_image()   # update image once the window has a size
 
     def resizeEvent(self, event):
+        """Keep the displayed image scaled to the window on resize."""
         super().resizeEvent(event)
-        self.update_image()  # automatically resize the image
+        self.update_image()
 
     def update_image(self):
+        """Refresh the displayed pixmap for the currently selected pipeline stage."""
         self.current_image_display_path = self.get_image(self.current_image_display)
         pixmap = QPixmap(self.current_image_display_path)
         if not pixmap.isNull():
@@ -208,6 +223,7 @@ class ImageViewer(QMainWindow):
             self.label.setPixmap(pixmap)
 
     def change_picture(self, endname):
+        """Switch to the pipeline stage named endname and update the left/right buttons."""
         L = len(ImageViewer.image_pipeline)
         i = ImageViewer.image_pipeline.index(endname)
         self.left.setText(ImageViewer.image_pipeline[(i-1) % L])
@@ -217,6 +233,7 @@ class ImageViewer(QMainWindow):
         self.update_image()
 
     def get_image(self, endname):
+        """Return the path of the file in dir_path whose name ends with endname."""
         for filename in os.listdir(self.dir_path):
             full_path = os.path.join(self.dir_path, filename)
             if os.path.isfile(full_path):
@@ -225,7 +242,10 @@ class ImageViewer(QMainWindow):
                     return full_path
         return ""
 
+
 class ImageDropZone(QLabel):
+    """Drag-and-drop / click-to-browse area for picking a single source image."""
+
     def __init__(self, on_image_dropped):
         super().__init__()
         self.on_image_dropped = on_image_dropped
@@ -247,14 +267,13 @@ class ImageDropZone(QLabel):
         self.original_pixmap = None
         self.setMinimumSize(400, 300)
 
-
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.choose_image()
         super().mousePressEvent(event)
 
     def choose_image(self):
-        """Open a dialog to select an image"""
+        """Open a dialog to select an image."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Choose an image",
@@ -282,6 +301,7 @@ class ImageDropZone(QLabel):
                 break
 
     def display_image(self, path):
+        """Load path and show it scaled to the widget's current size."""
         self.original_pixmap = QPixmap(path)
         if self.original_pixmap:
             self.setPixmap(self.original_pixmap.scaled(
@@ -290,7 +310,10 @@ class ImageDropZone(QLabel):
                 Qt.SmoothTransformation
             ))
 
+
 class AlgorithmWidget(QWidget):
+    """Algorithm picker, parameter form, run button, and embedded log terminal."""
+
     ALGO_PARAMS = {
         "chunked_soft_matting": chunk_soft_matting_data.ALGO_PARAMS,
         "soft_matting": soft_matting_data.ALGO_PARAMS,
@@ -386,6 +409,7 @@ class AlgorithmWidget(QWidget):
 
     # --- Update the form when the algorithm changes ---
     def on_algo_changed(self, algo_name):
+        """Rebuild the parameter form for algo_name (general + algorithm-specific fields)."""
         self.current_algo = algo_name
 
         # Clear the previous form
@@ -411,6 +435,7 @@ class AlgorithmWidget(QWidget):
 
     # --- Retrieve all parameters from the form ---
     def get_current_parameters(self):
+        """Read and type-cast the current form values into a dict."""
         params = {}
         for key, field in self.param_inputs.items():
             val_str = field.text().strip()
@@ -426,6 +451,7 @@ class AlgorithmWidget(QWidget):
         return params
 
     def get_selected_algorithm(self):
+        """Return the transmission-refinement function for the currently selected algorithm."""
         return self.ALGO_FUNCS[self.current_algo]
 
     # --- Method to display logs in the terminal ---
@@ -437,7 +463,10 @@ class AlgorithmWidget(QWidget):
         cursor.movePosition(QTextCursor.End)
         self.terminal.setTextCursor(cursor)
 
+
 class ImageDifferenceWidget(QWidget):
+    """Tab for dropping two images and visualizing their per-channel difference."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Image Comparator")
@@ -446,10 +475,10 @@ class ImageDifferenceWidget(QWidget):
         self.image1_path = None
         self.image2_path = None
 
-        # Main layout
+        # --- Main layout ---
         main_layout = QVBoxLayout(self)
 
-        # 1️⃣ Drop zones
+        # --- Drop zones ---
         drop_layout = QHBoxLayout()
         self.zone1 = ImageDropZone(self._on_image1_dropped)
         self.zone2 = ImageDropZone(self._on_image2_dropped)
@@ -457,7 +486,7 @@ class ImageDifferenceWidget(QWidget):
         drop_layout.addWidget(self.zone2)
         main_layout.addLayout(drop_layout)
 
-        # 2️⃣ Compare button
+        # --- Compare button ---
         self.btn_compare = QPushButton("Compare the two images")
         self.btn_compare.setStyleSheet("""
             QPushButton {
@@ -474,26 +503,27 @@ class ImageDifferenceWidget(QWidget):
         self.btn_compare.clicked.connect(self.compare_images)
         main_layout.addWidget(self.btn_compare, alignment=Qt.AlignCenter)
 
-        # 3️⃣ Results display area
+        # --- Results display area ---
         self.layout_resultats = QHBoxLayout()
         main_layout.addLayout(self.layout_resultats)
         self.labels_result = []
 
-    # 🔹 Callbacks
+    # --- Callbacks ---
     def _on_image1_dropped(self, path):
         self.image1_path = path
 
     def _on_image2_dropped(self, path):
         self.image2_path = path
 
-    # 🔹 Main function
+    # --- Main function ---
     def compare_images(self):
+        """Compare the two dropped images and render the diff in the results area."""
         if not self.image1_path or not self.image2_path:
             QMessageBox.warning(self, "Error", "Drop two images before comparing.")
             return
 
         try:
-            # --- Clear the previously displayed images ---
+            # Clear the previously displayed images
             while self.layout_resultats.count():
                 item = self.layout_resultats.takeAt(0)
                 widget = item.widget()
@@ -501,19 +531,17 @@ class ImageDifferenceWidget(QWidget):
                     widget.deleteLater()
             self.labels_result.clear()
 
-            # --- Compare via the existing function ---
+            # Compare via the existing utility
             result = ImageComparator.compare_images(self.image1_path, self.image2_path)
-
-            # --- If the function returns an explicit mode (optional) ---
             mode = result.get("mode", None)
 
-            # --- CASE 1: black & white image ---
             if mode == "grayscale" or "diff" in result:
+                # Case 1: black & white image
                 diff = result["diff"]
                 self._display_single_result(diff)
 
-            # --- CASE 2: color image ---
             elif mode == "color" or all(k in result for k in ["diff_r", "diff_g", "diff_b"]):
+                # Case 2: color image
                 diff_b = result["diff_b"]
                 diff_g = result["diff_g"]
                 diff_r = result["diff_r"]
@@ -527,8 +555,8 @@ class ImageDifferenceWidget(QWidget):
             QMessageBox.critical(self, "Error", str(e))
             return
 
-    # 🔹 Display a single channel (black & white)
     def _display_single_result(self, diff):
+        """Render a single grayscale difference map."""
         block = QVBoxLayout()
         title = QLabel("Difference (Grayscale)")
         title.setAlignment(Qt.AlignCenter)
@@ -549,8 +577,8 @@ class ImageDifferenceWidget(QWidget):
         self.layout_resultats.addLayout(block)
         self.labels_result.append(lbl_image)
 
-    # 🔹 Display the three color channels
     def _display_color_results(self, diff_b, diff_g, diff_r):
+        """Render the three per-channel (B/G/R) difference maps side by side."""
         titles = ["Blue Channel", "Green Channel", "Red Channel"]
 
         for title_text, channel in zip(titles, [diff_b, diff_g, diff_r]):
@@ -574,8 +602,12 @@ class ImageDifferenceWidget(QWidget):
             self.layout_resultats.addLayout(block)
             self.labels_result.append(lbl_image)
 
-# Pipeline comparison
+
+# --- Pipeline comparison ---
+
 class DirsListSidebar(QListWidget):
+    """Draggable sidebar list of pipeline-output folders."""
+
     def __init__(self):
         super().__init__()
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -601,6 +633,7 @@ class DirsListSidebar(QListWidget):
         """)
 
     def startDrag(self, supportedActions):
+        """Start a drag carrying the selected item's folder path as plain text."""
         item = self.currentItem()
         if item:
             drag = QDrag(self)
@@ -609,14 +642,17 @@ class DirsListSidebar(QListWidget):
             drag.setMimeData(mime_data)
             drag.exec(Qt.DropAction.CopyAction)
 
+
 class ImageComparisonColumn(QWidget):
+    """One pipeline stage's images (from two runs) plus their difference, stacked vertically."""
+
     def __init__(self, img1_path, img2_path, title):
         super().__init__()
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setSpacing(5)
         label_title = QLabel(title)
-        label_title.setSizePolicy(QSizePolicy.Policy.MinimumExpanding,QSizePolicy.Policy.Minimum)
+        label_title.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Minimum)
         label_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label_title.setStyleSheet("font-weight: bold; color: #2E3440;")
 
@@ -628,7 +664,6 @@ class ImageComparisonColumn(QWidget):
             layout.addWidget(img_label)
 
         # Difference
-
         idiff_dict = ImageComparator.compare_images(img1_path, img2_path)
         if idiff_dict["mode"] == "grayscale":
             diff = idiff_dict["diff"]
@@ -655,7 +690,10 @@ class ImageComparisonColumn(QWidget):
 
         layout.insertWidget(0, label_title)
 
+
 class PicturesDropArea(QWidget):
+    """Drop target that accepts two pipeline folders (dragged from DirsListSidebar) and compares them."""
+
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
@@ -710,6 +748,7 @@ class PicturesDropArea(QWidget):
         del layout
 
     def compareTwoImages(self):
+        """Lay out the two buffered pipeline folders side by side, stage by stage."""
         path1, path2 = self.folder_buffer_list
         self.folder_buffer_list.clear()
 
@@ -724,7 +763,7 @@ class PicturesDropArea(QWidget):
         paths2 = sorted(
             [os.path.join(path2, f) for f in os.listdir(path2) if f.endswith(".png")],
             key=lambda x: next((i for i, o in enumerate(order) if o in x), len(order))
-    )
+        )
 
         # Load JSON parameters
         with open(os.path.join(path1, "params.json"), "r") as f:
@@ -796,7 +835,10 @@ class PicturesDropArea(QWidget):
                 column = ImageComparisonColumn(paths1[i], paths2[i], stage.upper())
                 self.inner_layout.addWidget(column)
 
+
 class PipelineComparatorWidget(QWidget):
+    """Tab that lets the user drag two pipeline-output folders to compare them stage by stage."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pipeline Comparator")
@@ -843,6 +885,7 @@ class PipelineComparatorWidget(QWidget):
         self.loadTransformedImages()
 
     def loadTransformedImages(self):
+        """Refresh the sidebar with every pipeline-output folder found in seriespicturesoutput/."""
         self.sidebar_itemList.clear()
         base_dir = os.path.join(os.getcwd(), "seriespicturesoutput")
         if not os.path.exists(base_dir):
@@ -868,6 +911,7 @@ class PipelineComparatorWidget(QWidget):
                 item.setIcon(icon)
 
             self.sidebar_itemList.addItem(item)
+
 
 class ClickableImage(QLabel):
     """Clickable QLabel displaying a resized image,
@@ -896,6 +940,7 @@ class ClickableImage(QLabel):
             self.show_full_image()
 
     def show_full_image(self):
+        """Open a modal dialog with the full-size image, a save button, and a brightness slider."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Image preview")
         dialog.setModal(True)
@@ -928,6 +973,7 @@ class ClickableImage(QLabel):
         dialog.exec()
 
     def save_current_image(self):
+        """Save the currently displayed (possibly brightness-adjusted) image to disk."""
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save image",
@@ -938,6 +984,7 @@ class ClickableImage(QLabel):
             self.lbl.pixmap().save(file_path)
 
     def adjust_brightness(self, value):
+        """Re-render the preview image with value added to every RGB channel."""
         qimg = self.original_pixmap.toImage().convertToFormat(QImage.Format.Format_RGBA8888)
         width, height = qimg.width(), qimg.height()
 
@@ -949,9 +996,10 @@ class ClickableImage(QLabel):
 
         new_img = QImage(arr.data, width, height, QImage.Format.Format_RGBA8888)
         self.lbl.setPixmap(QPixmap.fromImage(new_img))
-# Main window
+
 
 class MainWindow(QMainWindow):
+    """Top-level window: tabs for processing, queue, image diff, and pipeline diff."""
 
     def __init__(self):
         super().__init__()
@@ -988,23 +1036,22 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.queue_widget, "📜 Queue")
         self.tabs.addTab(self.widget_difference, "➖ Image Difference")
         self.tabs.addTab(self.widget_difference_pipeline, "🔍 Pipeline Difference")
+
         # --- Queue management ---
         self.image_path = None
         self.queue = []          # list of (path, algo, params, item)
         self.processing_in_progress = False
         self.lock = threading.Lock()
 
-    # ---------------------------------------------------------
-    # Drag-and-drop handling
-    # ---------------------------------------------------------
+    # --- Drag-and-drop handling ---
     def on_image_dropped(self, path):
+        """Remember the dropped image as the current candidate for processing."""
         self.image_path = path
         self.logger.info(f"Image dropped: {path}")
 
-    # ---------------------------------------------------------
-    # Add to the queue
-    # ---------------------------------------------------------
+    # --- Add to the queue ---
     def add_to_queue(self):
+        """Queue the current image with the currently configured algorithm/parameters."""
         if not self.image_path:
             self.logger.info("No image dropped.")
             return
@@ -1021,10 +1068,9 @@ class MainWindow(QMainWindow):
         if not self.processing_in_progress:
             self._start_next_task()
 
-    # ---------------------------------------------------------
-    # Sequential processing
-    # ---------------------------------------------------------
+    # --- Sequential processing ---
     def _start_next_task(self):
+        """Pop the next queued task and run it on a background thread, if any remain."""
         if not self.queue:
             self.logger.info("✅ Queue empty.")
             self.processing_in_progress = False
@@ -1070,13 +1116,16 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=run, daemon=True).start()
 
+
 class QTextEditLogger(logging.Handler):
-    """Handler that writes logging messages into a QTextEdit."""
-    def __init__(self, text_edit : QTextEdit):
+    """Logging handler that appends formatted records to a QTextEdit."""
+
+    def __init__(self, text_edit: QTextEdit):
         super().__init__()
         self.text_edit = text_edit
 
     def emit(self, record):
+        """Append the formatted record and scroll the text edit to the end."""
         msg = self.format(record)
         self.text_edit.append(msg)
         cursor = self.text_edit.textCursor()
@@ -1084,10 +1133,14 @@ class QTextEditLogger(logging.Handler):
         self.text_edit.setTextCursor(cursor)
 
 
-if __name__ == "__main__":
+def main():
+    """Launch the Dehazer GUI (used as the ``python -m dehazer`` entry point)."""
     ensure_output_dir()
     app = QApplication([])
     mw = MainWindow()
-    terminal = mw.widget_algo
     mw.show()
     app.exec()
+
+
+if __name__ == "__main__":
+    main()

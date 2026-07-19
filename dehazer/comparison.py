@@ -1,3 +1,5 @@
+"""Batch evaluation of dehazed results against ground truth (MSE/PSNR/SSIM/UIQM), with a CLI."""
+
 import os
 import cv2
 import numpy as np
@@ -301,7 +303,7 @@ def analyze_parameters_root(gt_path, results_root, target_basename='14_hazy_fina
 if __name__ == "__main__":
     import argparse
     import os
-    from config import PROJECT_ROOT
+    from .config import PROJECT_ROOT
 
     parser = argparse.ArgumentParser(
         description="Compare dehazed results in folder to a ground-truth image."

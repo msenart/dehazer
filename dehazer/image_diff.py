@@ -1,3 +1,5 @@
+"""Channel-wise comparison of two images, used by the GUI's difference tabs."""
+
 import cv2
 import numpy as np
 import os
