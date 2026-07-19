@@ -17,6 +17,16 @@ The pipeline follows the classic Dark Channel Prior approach:
 
 This is implemented in [dehazer/core.py](dehazer/core.py).
 
+### Choosing a refinement method
+
+- The **guided filter** has a low, roughly constant memory footprint regardless of image size, so it's the safe default for large images.
+
+- **Soft matting** builds a matting Laplacian over every pixel's local window, which is very memory-intensive and **can exhaust RAM on large images.**
+
+- If you want soft matting's higher-quality transmission map on a large image without running out of memory, use **chunked soft matting** in the GUI: it cuts the image into smaller pieces, refines each one independently, and reassembles them, keeping memory usage bounded regardless of the overall image size. To get satisfying results, you can cut it vertically by increasing ``n_cut_height``. You should aim for a maximum of 700x700 patches if you want **to avoid a memory overflow.**
+
+In either cases, **watch your allocated memory in the task manager.**
+
 ## Project structure
 
 The project is a Python package, [dehazer/](dehazer/):
@@ -45,11 +55,12 @@ Then launch the GUI from the project root:
 python -m dehazer
 ```
 
-This opens a desktop interface where you can:
+This opens a desktop interface with four tabs:
 
-- Drop an image and choose which dehazing method to apply
-- Configure and run the processing pipeline
-- Compare two images or two full pipelines to visualize differences between methods
+- **🧩 Image Processing** — drop an image, pick a refinement algorithm and its parameters, and run the pipeline; progress is logged in the built-in terminal.
+- **📜 Queue** — pending and completed processing tasks; double-click a completed one to step through its pipeline stages (initial, dark channel, coarse/refined transmission, final).
+- **➖ Image Difference** — drop two images to visualize their per-channel absolute difference.
+- **🔍 Pipeline Difference** — drag two pipeline results from the sidebar into the drop area to compare their stages side by side.
 
 Processed images and their `params.json` metadata are written to `seriespicturesoutput/` at the project root (git-ignored).
 
