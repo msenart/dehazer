@@ -1,36 +1,46 @@
 # Dehazer
 
-Bonjour ! Ceci est notre **projet Dehazer** (débrumage d’images).
+**Dehazer** is a single-image haze removal tool built around the Dark Channel Prior algorithm (He et al., 2009), with a PySide6 desktop GUI for running, tuning, and comparing dehazing pipelines.
 
-##  Structure du projet
+## Project structure
 
-Le code principal se trouve dans :
-**code_src/complet_dehazer/main.py**
+The main code lives in [src/](src/):
 
-Après avoir installé toutes les dépendances, il vous suffit d’exécuter :
+- `main.py` — PySide6 GUI application (drag-and-drop dehazing pipeline, processing queue, image viewer, and comparator).
+- `dehazer.py` — Core Dark Channel Prior dehazing algorithm (dark channel, atmospheric light, transmission estimation, radiance recovery).
+- `u_guided_filter.py`, `u_soft_matting.py`, `u_soft_matting_chunked.py` — Transmission-map refinement methods (guided filter, closed-form soft matting, and a chunked/parallel variant for large images).
+- `image_diff.py` — Utility to compare two images channel by channel.
+- `comparison.py`, `plot_comparison.py`, `psnrssim.py` — Batch evaluation scripts (MSE/PSNR/SSIM/UIQM metrics) and plotting utilities for comparing dehazed output against ground truth.
 
-_python main.py_
+The [Final report/](Final%20report/) folder contains the project's final report and slides (in French) as well as the mid-term report.
 
+## Getting started
 
-Cela lancera une **interface visuelle en terminal** qui vous permettra de :
+Install the dependencies:
 
-- Choisir la méthode de débrumage à appliquer  
-- Gérer et configurer le pipeline de traitement  
-- Comparer deux images en calculant leur différence pour observer plus clairement les variations entre différentes méthodes  
+```
+pip install -r requirements.txt
+```
 
-## 🖼️ Base d’images
+Then launch the GUI from the `src/` folder:
 
-Nos principales images de test se trouvent dans :
+```
+python src/main.py
+```
 
-**hazed_images/I_hazed_images**
+This opens a desktop interface where you can:
 
-**hazed_images/very_hazed_images**
+- Drop an image and choose which dehazing method to apply
+- Configure and run the processing pipeline
+- Compare two images or two full pipelines to visualize differences between methods
 
-Vous pouvez les utiliser pour tester le fonctionnement du projet !
+## Test images
 
-Si vous voulez plus de ressources imageries pour tester, vous pouvez utiliser _curl <lien>_ pour télécharger les datasets dessous:
+To try the project out, you can download the following haze datasets:
 
-- I-Haze: Images brumées artificielles en intérieur **http://www.vision.ee.ethz.ch/ntire18/i-haze/I-HAZE.zip**
-- O-Haze: Images brumées artificielles en extérieur **http://www.vision.ee.ethz.ch/ntire18/o-haze/O-HAZE.zip**
-- NH-Haze: Images brumées de manière non homogène **https://data.vision.ee.ethz.ch/cvl/ntire20/nh-haze/files/NH-HAZE.zip**
-- D-Haze: Images brumées dépendant de la profondeur **http://ancuti.meo.etc.upt.ro/D_Hazzy_ICIP2016/D-HAZY_DATASET.zip**
+- I-Haze: artificial indoor hazy images — **http://www.vision.ee.ethz.ch/ntire18/i-haze/I-HAZE.zip**
+- O-Haze: artificial outdoor hazy images — **http://www.vision.ee.ethz.ch/ntire18/o-haze/O-HAZE.zip**
+- NH-Haze: non-homogeneous hazy images — **https://data.vision.ee.ethz.ch/cvl/ntire20/nh-haze/files/NH-HAZE.zip**
+- D-Haze: depth-dependent hazy images — **http://ancuti.meo.etc.upt.ro/D_Hazzy_ICIP2016/D-HAZY_DATASET.zip**
+
+Download a dataset with `curl <link>` and extract it into a `hazed_images/` folder at the project root (this folder is git-ignored) to use it with the scripts in `src/`.
