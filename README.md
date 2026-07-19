@@ -2,6 +2,11 @@
 
 **Dehazer** is a single-image haze removal tool built around the Dark Channel Prior algorithm (He et al., 2009), with a PySide6 desktop GUI for running, tuning, and comparing dehazing pipelines.
 
+<div style="display: flex; gap: 10px; justify-content: center; align-items: center; max-width: 100%;">
+  <img src="https://github.com/user-attachments/assets/460a6cbe-60aa-426c-814e-50c0ca1a8e0a" alt="Première image" style="width: 49%; height: auto; object-fit: contain;" />
+  <img src="https://github.com/user-attachments/assets/d7198ff5-be01-451b-9db1-09ab18cba538" alt="Deuxième image" style="width: 49%; height: auto; object-fit: contain;" />
+</div>
+
 ## How it works
 
 The pipeline follows the classic Dark Channel Prior approach:
